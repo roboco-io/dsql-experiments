@@ -1,13 +1,13 @@
 # 실험 목록
 
-[전체 실험 계획](../EXPERIMENT_PLAN.md)은 **DSQL의 성능·개발/운영 편의성을 RDS PostgreSQL Multi-AZ 인스턴스, Aurora Provisioned, Aurora Serverless v2와 비교**합니다. DSQL을 첫 실험부터 포함합니다. E001은 실측을 마치고 결과를 공개 보고서에 반영했습니다. E004는 실행 중이며, 나머지 항목은 계획 상태입니다.
+[전체 실험 계획](../EXPERIMENT_PLAN.md)은 **DSQL의 성능·개발/운영 편의성을 RDS PostgreSQL Multi-AZ 인스턴스, Aurora Provisioned, Aurora Serverless v2와 비교**합니다. DSQL을 첫 실험부터 포함합니다. E001은 실측을 마치고 결과를 공개 보고서에 반영했습니다. E004도 실측을 마쳤고, 나머지 항목은 계획 상태입니다.
 
 | 실험 | 확인할 질문 | 우선순위 | 상태 | 결과 | 이슈 | 공개 보고서 |
 | --- | --- | --- | --- | --- | --- | --- |
 | [001 — SQL 호환성과 이관](../EXPERIMENT_PLAN.md#e001) | DSQL에서 같은 업무를 구현하려면 무엇을 바꿔야 하는가? | P0 | completed | DSQL 17/35 무수정 통과, 16개 미지원(0A000); 대조군 34/35 | [#1](https://github.com/roboco-io/rds-experiments/issues/1) | [보고서](https://roboco.io/rds-experiments/experiments/e001/) |
 | [002 — OLTP 처리량과 지연](../EXPERIMENT_PLAN.md#e002) | DSQL의 SLO 용량·지연은 각 대조군의 몇 배인가? | P0 | planned | 미측정 | [#2](https://github.com/roboco-io/rds-experiments/issues/2) | [보고서](https://roboco.io/rds-experiments/experiments/e002/) |
 | [003 — 연결과 풀링](../EXPERIMENT_PLAN.md#e003) | DSQL의 인증·연결 갱신·급증 대응에 어떤 부담이 있는가? | P0 | planned | 미측정 | [#3](https://github.com/roboco-io/rds-experiments/issues/3) | [보고서](https://roboco.io/rds-experiments/experiments/e003/) |
-| [004 — 트랜잭션 정합성](004-transaction-contention/) | DSQL의 경합·재시도는 정합성·지연·구현량에 어떤 영향을 주는가? | P0 | running | 미측정(실행 중) | [#4](https://github.com/roboco-io/rds-experiments/issues/4) | [보고서](https://roboco.io/rds-experiments/experiments/e004/) |
+| [004 — 트랜잭션 정합성](004-transaction-contention/) | DSQL의 경합·재시도는 정합성·지연·구현량에 어떤 영향을 주는가? | P0 | completed | 불변식 위반 0/66셀. 집중 경합에서 DSQL은 대기 없이 40001로 실패(동시성 256 충돌률 67–71%, 성공 p99 ≤110 ms), 소형 대조군은 잠금 대기로 처리량 급감 | [#4](https://github.com/roboco-io/rds-experiments/issues/4) | [보고서](https://roboco.io/rds-experiments/experiments/e004/) |
 | [005 — 읽기 확장과 최신성](../EXPERIMENT_PLAN.md#e005) | DSQL은 reader 분산 대비 성능·최신성·라우팅 작업이 어떻게 다른가? | P1 | planned | 미측정 | [#5](https://github.com/roboco-io/rds-experiments/issues/5) | [보고서](https://roboco.io/rds-experiments/experiments/e005/) |
 | [006 — 연결 장애와 복구](../EXPERIMENT_PLAN.md#e006) | 같은 연결 장애 뒤 업무 복구·커밋 보존·재연결 부담은? | P0 공통 / P1 서비스별 장애 | planned | 미측정 | [#6](https://github.com/roboco-io/rds-experiments/issues/6) | [보고서](https://roboco.io/rds-experiments/experiments/e006/) |
 | [007 — 백업과 복원](../EXPERIMENT_PLAN.md#e007) | DSQL의 복구 기능·시간·작업량은 기존 서비스와 어떻게 다른가? | P1 | planned | 미측정 | [#7](https://github.com/roboco-io/rds-experiments/issues/7) | [보고서](https://roboco.io/rds-experiments/experiments/e007/) |

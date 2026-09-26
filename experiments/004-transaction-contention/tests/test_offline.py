@@ -783,6 +783,15 @@ class ManifestUpdates(unittest.TestCase):
             m.add_resource(S.BATCH, "vpc", "v-1")
             self.assertEqual(m.find(S.BATCH, "vpc", "v-1")["state"], "requested")
 
+class SummaryEdgeCases(unittest.TestCase):
+    def test_zero_control_tps_gives_no_ratio_instead_of_crashing(self):
+        rows = E.aggregate([_res("D1", "REPEATABLE READ", "hot", 256, "none", 1, 100, 50),
+                            _res("A2", "REPEATABLE READ", "hot", 256, "none", 1, 0, 2000)])
+        rat = E.ratios(rows)
+        self.assertEqual(len(rat), 1)
+        self.assertIsNone(rat[0]["tps_ratio_d1_over_control"])
+        self.assertAlmostEqual(rat[0]["p99_ratio_d1_over_control"], 0.025)
+
 
 if __name__ == "__main__":
     unittest.main()

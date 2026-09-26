@@ -189,9 +189,10 @@ def ratios(rows) -> list[dict]:
         a, b = d1[key], r
         if not (a["success_tps"] and b["success_tps"] and a["p99_ms"] and b["p99_ms"]):
             continue
+        div = lambda x, y: x / y if y else None  # noqa: E731 - a control with zero successes has no ratio
         out.append({"control": b["config"], "dist": key[0], "concurrency": key[1], "retry": key[2],
-                    "tps_ratio_d1_over_control": a["success_tps"]["median"] / b["success_tps"]["median"],
-                    "p99_ratio_d1_over_control": a["p99_ms"]["median"] / b["p99_ms"]["median"]})
+                    "tps_ratio_d1_over_control": div(a["success_tps"]["median"], b["success_tps"]["median"]),
+                    "p99_ratio_d1_over_control": div(a["p99_ms"]["median"], b["p99_ms"]["median"])})
     return out
 
 
@@ -442,7 +443,9 @@ def summarize(prefix):
     lines += ["", "## D1 / 대조군 비율 (RR, 중앙값 기준)", "", "| control | dist | conc | retry | TPS 비율 | p99 비율 |",
               "| --- | --- | ---: | --- | ---: | ---: |"]
     lines += [f"| {x['control']} | {x['dist']} | {x['concurrency']} | {x['retry']} | "
-              f"{x['tps_ratio_d1_over_control']:.3g} | {x['p99_ratio_d1_over_control']:.3g} |" for x in rat]
+              + " | ".join("-" if v is None else f"{v:.3g}" for v in (x["tps_ratio_d1_over_control"],
+                                                                        x["p99_ratio_d1_over_control"])) + " |"
+              for x in rat]
     S.write_private(os.path.join(base, "summary.json"), {"rows": rows, "ratios": rat, "scenarios": scen})
     with open(os.path.join(base, "summary.md"), "w") as fh:
         fh.write("\n".join(lines) + "\n")

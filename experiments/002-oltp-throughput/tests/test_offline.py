@@ -13,6 +13,7 @@ import cost  # noqa: E402
 import datagen as G  # noqa: E402
 import safety as S  # noqa: E402
 import schema as SC  # noqa: E402
+import workload as W  # noqa: E402
 
 ACCT = "123456789012"
 PFX = "e002-20260928t010203z-ab12"
@@ -139,3 +140,34 @@ class Data(unittest.TestCase):
         pool = G.CANCEL_POOL(sc)
         self.assertLess(pool.stop, SC.RUN_ID_BASE)
         self.assertLessEqual(pool.stop, G.count("orders", sc))
+
+
+class Workload(unittest.TestCase):
+    def test_mix_matches_plan(self):
+        rng, sc = random.Random(1), G.scaled(0.001)
+        n = 40000
+        kinds = [W.make_op(rng, sc, "c", 0, i).kind for i in range(n)]
+        for kind, share in W.MIX:
+            self.assertAlmostEqual(kinds.count(kind) / n, share, delta=0.01, msg=kind)
+
+    def test_op_ids_unique_and_run_ids_above_base(self):
+        rng, sc = random.Random(2), G.scaled(0.001)
+        ops = [W.make_op(rng, sc, "cell1", p, i) for p in range(3) for i in range(500)]
+        self.assertEqual(len({o.op_id for o in ops}), len(ops))
+        for o in ops:
+            if o.kind in W.WRITE_KINDS:
+                self.assertGreaterEqual(o.ref_id, SC.RUN_ID_BASE)
+
+    def test_cancel_targets_come_from_the_pool(self):
+        rng, sc = random.Random(3), G.scaled(0.001)
+        pool = G.CANCEL_POOL(sc)
+        for i in range(2000):
+            o = W.make_op(rng, sc, "c", 0, i)
+            if o.kind == "cancel":
+                self.assertIn(o.key, pool)
+
+    def test_ref_ids_do_not_collide_across_cells(self):
+        self.assertNotEqual(W.ref_id("cell-a", 0, 1), W.ref_id("cell-b", 0, 1))
+
+    def test_ref_id_fits_bigint(self):
+        self.assertLess(W.ref_id("x" * 40, 255, 2 ** 22 - 1), 2 ** 63)

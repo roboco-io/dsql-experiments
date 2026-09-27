@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cost  # noqa: E402
 import datagen as G  # noqa: E402
+import infra as IN  # noqa: E402
 import invariants as INV  # noqa: E402
 import openloop as OL  # noqa: E402
 import runner as R  # noqa: E402
@@ -354,3 +355,39 @@ class Runner(unittest.TestCase):
             self.assertIn(f, remote.BUNDLE_FILES)
             self.assertTrue(os.path.exists(os.path.join(os.path.dirname(os.path.dirname(
                 os.path.abspath(__file__))), f)), f)
+
+
+class Infra(unittest.TestCase):
+    ch = {"engine": "aurora-postgresql", "version": "16.9", "class": "db.r6g.xlarge"}
+
+    def test_r1_is_plan_sized(self):
+        p = IN.r1_params("pfx", {"engine": "postgres", "version": "16.9", "class": "db.r6g.xlarge"}, {}, {})
+        self.assertEqual((p["DBInstanceClass"], p["MultiAZ"], p["StorageType"]), ("db.r6g.xlarge", True, "gp3"))
+        self.assertEqual((p["AllocatedStorage"], p["Iops"], p["StorageThroughput"]), (400, 12000, 500))
+
+    def test_aurora_uses_standard_storage(self):
+        self.assertEqual(IN.aurora_cluster_params("A1", "pfx", self.ch, {})["StorageType"], "aurora")
+        self.assertNotIn("ServerlessV2ScalingConfiguration", IN.aurora_cluster_params("A1", "pfx", self.ch, {}))
+
+    def test_a2_scaling_is_4_to_32(self):
+        p = IN.aurora_cluster_params("A2", "pfx", self.ch, {})
+        self.assertEqual(p["ServerlessV2ScalingConfiguration"], {"MinCapacity": 4, "MaxCapacity": 32})
+
+    def test_reader_is_tier1_in_other_az(self):
+        ch = dict(self.ch, **{"class": "db.serverless"})
+        w = IN.aurora_instance_params("A2", "pfx", "writer", ch, {}, {}, "ap-northeast-2a")
+        r = IN.aurora_instance_params("A2", "pfx", "reader", ch, {}, {}, "ap-northeast-2c")
+        self.assertEqual((w["PromotionTier"], r["PromotionTier"]), (0, 1))
+        self.assertNotEqual(w["AvailabilityZone"], r["AvailabilityZone"])
+        self.assertNotEqual(w["DBInstanceIdentifier"], r["DBInstanceIdentifier"])
+        self.assertEqual(w["DBInstanceClass"], "db.serverless")
+
+    def test_plan_classes_runner_and_cidr(self):
+        self.assertEqual(IN.DB_CLASS, {"R1": "db.r6g.xlarge", "A1": "db.r6g.xlarge", "A2": "db.serverless"})
+        self.assertEqual(IN.RUNNER_TYPE, "c7g.4xlarge")
+        self.assertEqual(IN.VPC_CIDR_PREFIX, "10.92")
+
+    def test_db_rate_keys(self):
+        self.assertEqual(IN.db_rate("R1"), cost.DB_RATE_USD_PER_H["R1"])
+        self.assertEqual(IN.db_rate("A1"), cost.DB_RATE_USD_PER_H["A1_instance"])
+        self.assertEqual(IN.db_rate("A2"), cost.DB_RATE_USD_PER_H["A2_instance_worst"])

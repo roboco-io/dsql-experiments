@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cost  # noqa: E402
 import datagen as G  # noqa: E402
+import openloop as OL  # noqa: E402
 import safety as S  # noqa: E402
 import schema as SC  # noqa: E402
 import workload as W  # noqa: E402
@@ -171,3 +172,55 @@ class Workload(unittest.TestCase):
 
     def test_ref_id_fits_bigint(self):
         self.assertLess(W.ref_id("x" * 40, 255, 2 ** 22 - 1), 2 ** 63)
+
+
+class OpenLoop(unittest.TestCase):
+    def test_poisson_rate_and_bounds(self):
+        s = OL.poisson_schedule(500.0, 60.0, random.Random(1))
+        self.assertAlmostEqual(len(s) / 60.0, 500.0, delta=15)
+        self.assertEqual(s, sorted(s))
+        self.assertTrue(all(0 <= t < 60.0 for t in s))
+
+    def test_poisson_gaps_look_exponential(self):
+        s = OL.poisson_schedule(1000.0, 30.0, random.Random(2))
+        gaps = [b - a for a, b in zip(s, s[1:])]
+        mean = sum(gaps) / len(gaps)
+        cv = (sum((g - mean) ** 2 for g in gaps) / len(gaps)) ** 0.5 / mean
+        self.assertAlmostEqual(cv, 1.0, delta=0.05)     # exponential: std == mean
+
+    def test_zero_rate_schedules_nothing(self):
+        self.assertEqual(OL.poisson_schedule(0.0, 10.0, random.Random(1)), [])
+
+    def test_split_rate_sums(self):
+        self.assertAlmostEqual(sum(OL.split_rate(1000.0, 16)), 1000.0)
+
+    def test_skipped_counts_as_technical_failure_and_rejects_do_not(self):
+        st = OL.Stats()
+        for _ in range(997):
+            st.record("product_read", W.Result("committed", 1), 5.0, 0.1, True)
+        st.record("order_create", W.Result("rejected", 1), 5.0, 0.1, True)
+        st.record_skipped("product_read", True)
+        st.record("cancel", W.Result("failed", 3, reason="deadline"), 2000.0, 0.1, True)
+        m = OL.metrics(st.to_dict(), 10.0)
+        self.assertAlmostEqual(m["technical_failure_rate"], 2 / 1000)
+        self.assertEqual(m["per_kind"]["product_read"]["skipped"], 1)
+
+    def test_latencies_outside_measure_window_are_ignored(self):
+        st = OL.Stats()
+        st.record("product_read", W.Result("committed", 1), 999.0, 0.0, False)
+        st.record("product_read", W.Result("committed", 1), 1.0, 0.0, True)
+        self.assertLess(OL.metrics(st.to_dict(), 1.0)["per_kind"]["product_read"]["p99_ms"], 2)
+
+    def test_ledger_counts_commits_outside_the_window_too(self):
+        st = OL.Stats()
+        st.record("order_create", W.Result("committed", 1), 1.0, 0.0, False)
+        st.record("cancel", W.Result("failed", 1, ambiguous=True), 1.0, 0.0, True)
+        self.assertEqual(st.ledger["order_create"]["committed"], 1)
+        self.assertEqual(st.ledger["cancel"]["ambiguous"], 1)
+
+    def test_stats_round_trip(self):
+        st = OL.Stats()
+        st.record("cancel", W.Result("committed", 2, ["40001"]), 12.0, 3.0, True)
+        st.record_lag(4.0)
+        again = OL.Stats.from_dict(json.loads(json.dumps(st.to_dict())))
+        self.assertEqual(OL.metrics(again.to_dict(), 1.0), OL.metrics(st.to_dict(), 1.0))

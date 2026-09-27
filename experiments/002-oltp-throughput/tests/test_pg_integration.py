@@ -1,5 +1,5 @@
 """Integration tests against PostgreSQL 16. Run:
-docker run -d --rm --name e002-pg -e POSTGRES_PASSWORD=e002 -p 55433:5432 postgres:16
+docker run -d --rm --name e002-pg -e POSTGRES_PASSWORD=e002 -p 55433:5432 postgres:16 -c max_connections=600
 E002_PG_DSN=postgresql://postgres:e002@localhost:55433/postgres python3 -m unittest tests.test_pg_integration -v
 """
 import asyncio
@@ -14,6 +14,7 @@ import psycopg
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import conn as C  # noqa: E402
 import datagen as G  # noqa: E402
+import openloop as OL  # noqa: E402
 import retry  # noqa: E402
 import schema as SC  # noqa: E402
 import workload as W  # noqa: E402
@@ -98,3 +99,25 @@ class WorkloadIntegration(unittest.TestCase):
         with psycopg.connect(DSN, autocommit=True) as c:
             n = c.execute("SELECT count(*) FROM orders WHERE id = %s", (op.ref_id,)).fetchone()[0]
         self.assertEqual(n, 1)
+
+
+@unittest.skipUnless(DSN, "set E002_PG_DSN to run")
+class EngineIntegration(unittest.TestCase):
+    target = {"kind": "dsn", "dsn": DSN or ""}
+
+    @classmethod
+    def setUpClass(cls):
+        with psycopg.connect(DSN, autocommit=True) as c:
+            fresh_load(c)
+
+    def test_open_loop_hits_rate(self):
+        cell = OL.Cell("it-open", "LOCAL", "open", 200.0, 0, 1, 2, 5, 0.001)
+        st = OL.run_cell(self.target, cell, time.time() + 8, SMALL, processes=2)
+        m = OL.metrics(st.to_dict(), cell.measure_s)
+        self.assertAlmostEqual(m["attempt_tps"], 200.0, delta=30)
+        self.assertLess(m["technical_failure_rate"], 0.01)
+
+    def test_closed_loop_runs(self):
+        cell = OL.Cell("it-closed", "LOCAL", "closed", 0.0, 8, 1, 1, 3, 0.001)
+        st = OL.run_cell(self.target, cell, time.time() + 3, SMALL, processes=2)
+        self.assertGreater(OL.metrics(st.to_dict(), cell.measure_s)["success_tps"], 10)

@@ -10,7 +10,9 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cost  # noqa: E402
+import datagen as G  # noqa: E402
 import safety as S  # noqa: E402
+import schema as SC  # noqa: E402
 
 ACCT = "123456789012"
 PFX = "e002-20260928t010203z-ab12"
@@ -97,3 +99,43 @@ class Cost(unittest.TestCase):
     def test_new_manifest_has_measured_usd(self):
         with tempfile.TemporaryDirectory() as tmp:
             self.assertEqual(_manifest(tmp).data["measured_usd"], {})
+
+
+class Data(unittest.TestCase):
+    def test_rows_are_deterministic_per_id(self):
+        sc = G.scaled(0.001)
+        self.assertEqual(G.rows("orders", 10, 20, sc), G.rows("orders", 10, 20, sc))
+        self.assertEqual(G.rows("orders", 10, 20, sc)[5], G.rows("orders", 15, 16, sc)[0])
+
+    def test_chunks_cover_every_id_once(self):
+        sc = G.scaled(0.001)
+        for t in SC.TABLES:
+            ids = [i for _, a, b in G.chunks(t, sc, 700) for i in range(a, b)]
+            self.assertEqual(ids, list(range(G.count(t, sc))), t)
+
+    def test_chunk_size_limit(self):
+        with self.assertRaises(ValueError):
+            G.chunks("orders", G.scaled(0.001), 2600)
+
+    def test_items_have_one_to_four_lines_of_existing_products(self):
+        sc = G.scaled(0.001)
+        for oid in range(200):
+            items = G.items_of(oid, sc)
+            self.assertTrue(1 <= len(items) <= 4)
+            self.assertTrue(all(0 <= p < sc.products and 1 <= q <= 3 for _, p, q in items))
+
+    def test_order_items_rows_match_items_of(self):
+        sc = G.scaled(0.001)
+        rows = G.rows("order_items", 0, 3, sc)      # ids here are order ids; each yields its lines
+        want = [(oid, ln, p, q, G.price(p)) for oid in range(3) for ln, p, q in G.items_of(oid, sc)]
+        self.assertEqual(rows, want)
+
+    def test_dsql_ddl_uses_async_index(self):
+        self.assertTrue(any("CREATE INDEX ASYNC" in s for s in SC.ddl("dsql")))
+        self.assertFalse(any("ASYNC" in s for s in SC.ddl("pg")))
+
+    def test_cancel_pool_is_baseline_orders(self):
+        sc = G.scaled(0.001)
+        pool = G.CANCEL_POOL(sc)
+        self.assertLess(pool.stop, SC.RUN_ID_BASE)
+        self.assertLessEqual(pool.stop, G.count("orders", sc))

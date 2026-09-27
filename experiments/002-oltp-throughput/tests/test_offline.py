@@ -14,6 +14,7 @@ import datagen as G  # noqa: E402
 import openloop as OL  # noqa: E402
 import safety as S  # noqa: E402
 import schema as SC  # noqa: E402
+import slo  # noqa: E402
 import workload as W  # noqa: E402
 
 ACCT = "123456789012"
@@ -224,3 +225,68 @@ class OpenLoop(unittest.TestCase):
         st.record_lag(4.0)
         again = OL.Stats.from_dict(json.loads(json.dumps(st.to_dict())))
         self.assertEqual(OL.metrics(again.to_dict(), 1.0), OL.metrics(st.to_dict(), 1.0))
+
+
+def _res(p99=10.0, p95=5.0, fail=0.0, cpu=40.0, lag=1.0, viol=(), status="ok", rate=100.0, rep=1, tps=100.0):
+    per = {k: {"p95_ms": p95, "p99_ms": p99, "success_tps": tps / 4} for k in slo.SLO}
+    return {"status": status, "cell": {"rate": rate, "rep": rep, "concurrency": 64},
+            "metrics": {"per_kind": per, "technical_failure_rate": fail, "success_tps": tps},
+            "generator": {"cpu_pct": cpu, "lag_p99_ms": lag}, "invariants": {"violations": list(viol)}}
+
+
+class Slo(unittest.TestCase):
+    def test_pass_and_read_bound(self):
+        self.assertEqual(slo.judge(_res())["verdict"], "pass")
+        self.assertEqual(slo.judge(_res(p99=150.0))["verdict"], "fail")   # reads need p99 <= 100
+
+    def test_write_bound_is_looser(self):
+        r = _res()
+        r["metrics"]["per_kind"]["order_create"]["p99_ms"] = 150.0
+        self.assertEqual(slo.judge(r)["verdict"], "pass")
+
+    def test_failure_rate_bound(self):
+        self.assertEqual(slo.judge(_res(fail=0.002))["verdict"], "fail")
+
+    def test_missing_kind_fails(self):
+        r = _res()
+        del r["metrics"]["per_kind"]["cancel"]
+        self.assertEqual(slo.judge(r)["verdict"], "fail")
+
+    def test_invalid_cell_is_not_a_slo_failure(self):
+        self.assertEqual(slo.judge(_res(cpu=95.0, p99=500.0))["verdict"], "invalid")
+        self.assertEqual(slo.judge(_res(lag=25.0))["verdict"], "invalid")
+        self.assertEqual(slo.judge(_res(viol=["neg_stock"]))["verdict"], "invalid")
+        self.assertEqual(slo.judge(_res(status="error"))["verdict"], "invalid")
+
+    def test_qref_is_min_of_best_passing_tps(self):
+        explore = {"D1": [_res(tps=900), _res(tps=2000)], "R1": [_res(tps=700), _res(tps=1500, p99=300)],
+                   "A1": [_res(tps=800)], "A2": [_res(tps=1200)]}
+        out = slo.qref(explore)
+        self.assertEqual(out["qref"], 700)
+        self.assertEqual(out["limiting"], "R1")
+
+    def test_qref_none_when_a_config_never_passes(self):
+        self.assertIsNone(slo.qref({"D1": [_res(p99=300)], "R1": [_res()]})["qref"])
+
+    def test_next_rate_steps_then_bisects_once_then_stops(self):
+        self.assertEqual(slo.next_rate([60, 100, 120], [], 100, False), 150)
+        self.assertEqual(slo.next_rate([60, 100, 120, 150], [187.5], 100, False), 168.75)
+        self.assertIsNone(slo.next_rate([60, 100, 120, 150, 168.75], [187.5], 100, False))
+        self.assertIsNone(slo.next_rate([60, 100, 120, 150], [168.75, 187.5], 100, False))
+        self.assertIsNone(slo.next_rate([60, 100, 120], [], 100, True))
+
+    def test_select_q_requires_every_rep(self):
+        rs = [_res(rate=100, rep=r) for r in (1, 2, 3)] + [_res(rate=120, rep=1), _res(rate=120, rep=2, p99=300)]
+        out = slo.select_q(rs, 3)
+        self.assertEqual((out["q"], out["status"]), (100, "confirmed"))
+
+    def test_select_q_provisional_with_fewer_reps(self):
+        self.assertEqual(slo.select_q([_res(rate=100, rep=1)], 3)["status"], "provisional")
+
+    def test_select_q_lower_bound_when_no_rate_failed(self):
+        rs = [_res(rate=r, rep=1) for r in (50, 100, 120)]
+        self.assertEqual(slo.select_q(rs, 1, stopped_early=True)["status"], "lower_bound")
+
+    def test_select_q_ignores_invalid_cells(self):
+        rs = [_res(rate=100, rep=1), _res(rate=150, rep=1, cpu=99.0, p99=900)]
+        self.assertEqual(slo.select_q(rs, 1)["q"], 100)

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cost  # noqa: E402
 import datagen as G  # noqa: E402
+import invariants as INV  # noqa: E402
 import openloop as OL  # noqa: E402
 import safety as S  # noqa: E402
 import schema as SC  # noqa: E402
@@ -290,3 +291,39 @@ class Slo(unittest.TestCase):
     def test_select_q_ignores_invalid_cells(self):
         rs = [_res(rate=100, rep=1), _res(rate=150, rep=1, cpu=99.0, p99=900)]
         self.assertEqual(slo.select_q(rs, 1)["q"], 100)
+
+
+class Invariants(unittest.TestCase):
+    ledger = {"order_create": {"committed": 10, "ambiguous": 0}, "cancel": {"committed": 4, "ambiguous": 0}}
+
+    def _facts(self, **kw):
+        base = {"neg_stock": 0, "stock_delta_mismatch": 0, "order_receipts": 10, "cancel_receipts": 4,
+                "run_orders": 10, "orders_without_receipt": 0, "orders_without_items": 0,
+                "charge_rows": 10, "refund_rows": 4, "charge_total_mismatch": 0, "refund_total_mismatch": 0,
+                "cancelled_without_receipt": 0}
+        base.update(kw)
+        return base
+
+    def test_clean_run_has_no_violations(self):
+        self.assertEqual(INV.check(self._facts(), self.ledger)["violations"], [])
+
+    def test_receipts_must_cover_client_commits(self):
+        ledger = {"order_create": {"committed": 11, "ambiguous": 0}, "cancel": {"committed": 4, "ambiguous": 0}}
+        self.assertIn("lost_commit:order_create", INV.check(self._facts(), ledger)["violations"])
+
+    def test_ambiguous_commits_widen_the_upper_bound(self):
+        ledger = {"order_create": {"committed": 9, "ambiguous": 1}, "cancel": {"committed": 4, "ambiguous": 0}}
+        self.assertEqual(INV.check(self._facts(), ledger)["violations"], [])
+
+    def test_extra_effects_are_violations(self):
+        self.assertIn("unexpected_effect:cancel", INV.check(self._facts(cancel_receipts=5, refund_rows=5),
+                                                            self.ledger)["violations"])
+
+    def test_zero_required_facts(self):
+        v = INV.check(self._facts(neg_stock=1, stock_delta_mismatch=2), self.ledger)["violations"]
+        self.assertIn("neg_stock", v)
+        self.assertIn("stock_delta_mismatch", v)
+
+    def test_effect_counts_must_match_receipts(self):
+        v = INV.check(self._facts(charge_rows=9), self.ledger)["violations"]
+        self.assertIn("order_effect_count", v)

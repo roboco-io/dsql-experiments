@@ -14,6 +14,7 @@ import psycopg
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import conn as C  # noqa: E402
 import datagen as G  # noqa: E402
+import invariants as INV  # noqa: E402
 import openloop as OL  # noqa: E402
 import retry  # noqa: E402
 import schema as SC  # noqa: E402
@@ -121,3 +122,30 @@ class EngineIntegration(unittest.TestCase):
         cell = OL.Cell("it-closed", "LOCAL", "closed", 0.0, 8, 1, 1, 3, 0.001)
         st = OL.run_cell(self.target, cell, time.time() + 3, SMALL, processes=2)
         self.assertGreater(OL.metrics(st.to_dict(), cell.measure_s)["success_tps"], 10)
+
+
+def _baseline(c):
+    return (c.execute("SELECT sum(qty) FROM inventory").fetchone()[0],
+            c.execute("SELECT count(*) FROM orders WHERE status = 'cancelled'").fetchone()[0],
+            c.execute("SELECT count(*) FROM orders").fetchone()[0],
+            c.execute("SELECT count(*) FROM ledger").fetchone()[0])
+
+
+@unittest.skipUnless(DSN, "set E002_PG_DSN to run")
+class ResetIntegration(unittest.TestCase):
+    target = {"kind": "dsn", "dsn": DSN or ""}
+
+    def test_cell_then_invariants_then_reset_restores_baseline(self):
+        with psycopg.connect(DSN, autocommit=True) as c:
+            fresh_load(c)
+            before = _baseline(c)
+        cell = OL.Cell("it-inv", "LOCAL", "open", 150.0, 0, 1, 1, 4, 0.001)
+        st = OL.run_cell(self.target, cell, time.time() + 8, SMALL, processes=2)
+        with psycopg.connect(DSN, autocommit=True) as c:
+            self.assertGreater(st.ledger["cancel"]["committed"], 0)
+            out = INV.check(INV.collect(c), st.ledger)
+            self.assertEqual(out["violations"], [], out["facts"])
+            INV.reset(c, batch=50)
+            self.assertEqual(_baseline(c), before)
+            self.assertEqual(c.execute("SELECT count(*) FROM operation_receipts").fetchone()[0], 0)
+            self.assertEqual(c.execute("SELECT count(*) FROM inventory WHERE qty <> base_qty").fetchone()[0], 0)

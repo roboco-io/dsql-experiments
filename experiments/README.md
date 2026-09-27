@@ -5,7 +5,7 @@
 | 실험 | 확인할 질문 | 우선순위 | 상태 | 결과 | 이슈 | 공개 보고서 |
 | --- | --- | --- | --- | --- | --- | --- |
 | [001 — SQL 호환성과 이관](../EXPERIMENT_PLAN.md#e001) | DSQL에서 같은 업무를 구현하려면 무엇을 바꿔야 하는가? | P0 | completed | DSQL 17/35 무수정 통과, 16개 미지원(0A000); 대조군 34/35 | [#1](https://github.com/roboco-io/rds-experiments/issues/1) | [보고서](https://roboco.io/rds-experiments/experiments/e001/) |
-| [002 — OLTP 처리량과 지연](../EXPERIMENT_PLAN.md#e002) | DSQL의 SLO 용량·지연은 각 대조군의 몇 배인가? | P0 | planned | 미측정 | [#2](https://github.com/roboco-io/rds-experiments/issues/2) | [보고서](https://roboco.io/rds-experiments/experiments/e002/) |
+| [002 — OLTP 처리량과 지연](002-oltp-throughput/) | DSQL의 SLO 용량·지연은 각 대조군의 몇 배인가? | P0 | planned | 미측정 | [#2](https://github.com/roboco-io/rds-experiments/issues/2) | [보고서](https://roboco.io/rds-experiments/experiments/e002/) |
 | [003 — 연결과 풀링](../EXPERIMENT_PLAN.md#e003) | DSQL의 인증·연결 갱신·급증 대응에 어떤 부담이 있는가? | P0 | planned | 미측정 | [#3](https://github.com/roboco-io/rds-experiments/issues/3) | [보고서](https://roboco.io/rds-experiments/experiments/e003/) |
 | [004 — 트랜잭션 정합성](004-transaction-contention/) | DSQL의 경합·재시도는 정합성·지연·구현량에 어떤 영향을 주는가? | P0 | completed | 불변식 위반 0/66셀. 집중 경합에서 DSQL은 대기 없이 40001로 실패(동시성 256 충돌률 67–71%, 성공 p99 ≤110 ms), 소형 대조군은 잠금 대기로 처리량 급감 | [#4](https://github.com/roboco-io/rds-experiments/issues/4) | [보고서](https://roboco.io/rds-experiments/experiments/e004/) |
 | [005 — 읽기 확장과 최신성](../EXPERIMENT_PLAN.md#e005) | DSQL은 reader 분산 대비 성능·최신성·라우팅 작업이 어떻게 다른가? | P1 | planned | 미측정 | [#5](https://github.com/roboco-io/rds-experiments/issues/5) | [보고서](https://roboco.io/rds-experiments/experiments/e005/) |

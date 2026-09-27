@@ -44,7 +44,7 @@ layout: default
     {% for experiment in experiments %}
     <article class="experiment-row">
       <span class="experiment-id">{{ experiment.experiment_id }}</span>
-      <div class="experiment-description"><h3><a href="{{ experiment.url | relative_url }}">{{ experiment.title | escape }}</a></h3><p>{{ experiment.question | escape }}</p></div>
+      <div class="experiment-description"><h3><a href="{{ experiment.url | relative_url }}">{{ experiment.title | escape }}</a></h3><p>{{ experiment.question | escape }}</p>{% if experiment.status == 'completed' and experiment.result %}<p class="experiment-result"><strong>결과</strong> {{ experiment.result | escape }}</p>{% endif %}</div>
       <div class="experiment-state"><span class="status status-{{ experiment.status }}">{{ site.data.statuses[experiment.status] }}</span><small>{{ experiment.priority }}</small><a href="{{ experiment.issue_url }}">이슈 #{{ experiment.issue }}</a></div>
     </article>
     {% endfor %}

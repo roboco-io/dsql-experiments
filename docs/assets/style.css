@@ -67,6 +67,8 @@ h1, h2, h3 { line-height: 1.35; word-break: keep-all; overflow-wrap: anywhere; }
 .experiment-description h3 a { color: var(--ink); text-decoration: none; }
 .experiment-description h3 a:hover { color: var(--accent); text-decoration: underline; }
 .experiment-description p { font-size: 15px; color: var(--muted); margin: 0; max-width: 670px; word-break: keep-all; overflow-wrap: anywhere; }
+.experiment-description p.experiment-result { margin-top: 8px; color: var(--ink); }
+.experiment-result strong { color: var(--accent); margin-right: 6px; }
 .experiment-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; font-size: 13px; }
 .experiment-state > a { flex-basis: 100%; }
 .experiment-state > small { color: var(--muted); }

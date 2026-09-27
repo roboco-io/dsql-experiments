@@ -42,7 +42,7 @@ files.each do |file|
 
   next unless data["status"] == "completed"
 
-  %w[summary measured_at code_commit].each do |key|
+  %w[summary result measured_at code_commit].each do |key|
     errors << "#{name}: completed reports require #{key}" if data[key].to_s.strip.empty?
   end
   begin

@@ -13,6 +13,7 @@ import cost  # noqa: E402
 import datagen as G  # noqa: E402
 import invariants as INV  # noqa: E402
 import openloop as OL  # noqa: E402
+import runner as R  # noqa: E402
 import safety as S  # noqa: E402
 import schema as SC  # noqa: E402
 import slo  # noqa: E402
@@ -327,3 +328,29 @@ class Invariants(unittest.TestCase):
     def test_effect_counts_must_match_receipts(self):
         v = INV.check(self._facts(charge_rows=9), self.ledger)["violations"]
         self.assertIn("order_effect_count", v)
+
+
+class Runner(unittest.TestCase):
+    def test_start_delay_covers_staggered_connects(self):
+        cell = OL.Cell("x", "D1", "open", 1000.0, 0, 1, 10, 60)
+        self.assertGreaterEqual(R.start_delay_s(cell, 16), 256 / 16 * OL.STAGGER_S + 10)
+        closed = OL.Cell("y", "D1", "closed", 0.0, 256, 1, 10, 60)
+        self.assertGreaterEqual(R.start_delay_s(closed, 4), 256 / 4 * OL.STAGGER_S + 10)
+
+    def test_load_method_by_kind(self):
+        self.assertEqual(R.load_method({"kind": "dsql"}), "insert")
+        self.assertEqual(R.load_method({"kind": "pg"}), "copy")
+        self.assertEqual(R.load_method({"kind": "dsn"}), "copy")
+
+    def test_pending_chunks_skip_finished(self):
+        todo = R.pending_chunks([("orders", 0, 10), ("orders", 10, 20)], {"orders:0:10"})
+        self.assertEqual(todo, [("orders", 10, 20)])
+
+    def test_bundle_lists_every_runner_module(self):
+        import remote
+        self.assertEqual(remote.REMOTE_ROOT, "/opt/e002")
+        for f in ("runner.py", "openloop.py", "workload.py", "datagen.py", "schema.py", "invariants.py",
+                  "retry.py", "hist.py", "conn.py", "requirements.txt"):
+            self.assertIn(f, remote.BUNDLE_FILES)
+            self.assertTrue(os.path.exists(os.path.join(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))), f)), f)

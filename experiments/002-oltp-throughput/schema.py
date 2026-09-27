@@ -26,7 +26,7 @@ _TABLE_DDL = (
     "CREATE TABLE operation_receipts (op_id text PRIMARY KEY, kind text NOT NULL, ref_id bigint NOT NULL, "
     "created_at timestamptz NOT NULL)",
 )
-_INDEX = "INDEX orders_customer_created ON orders (customer_id, created_at DESC)"
+_INDEX = "INDEX orders_customer_created ON orders (customer_id, created_at)"
 
 
 def ddl(kind: str) -> list[str]:

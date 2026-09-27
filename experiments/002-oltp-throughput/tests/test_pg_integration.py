@@ -7,7 +7,10 @@ import os
 import random
 import time
 import sys
+import json
+import tempfile
 import unittest
+from dataclasses import asdict
 
 import psycopg
 
@@ -17,6 +20,7 @@ import datagen as G  # noqa: E402
 import invariants as INV  # noqa: E402
 import openloop as OL  # noqa: E402
 import retry  # noqa: E402
+import runner as R  # noqa: E402
 import schema as SC  # noqa: E402
 import workload as W  # noqa: E402
 
@@ -149,3 +153,27 @@ class ResetIntegration(unittest.TestCase):
             self.assertEqual(_baseline(c), before)
             self.assertEqual(c.execute("SELECT count(*) FROM operation_receipts").fetchone()[0], 0)
             self.assertEqual(c.execute("SELECT count(*) FROM inventory WHERE qty <> base_qty").fetchone()[0], 0)
+
+
+@unittest.skipUnless(DSN, "set E002_PG_DSN to run")
+class RunnerIntegration(unittest.TestCase):
+    def test_schema_load_cell_via_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tgt = os.path.join(tmp, "t.json")
+            json.dump({"kind": "dsn", "dsn": DSN}, open(tgt, "w"))
+            self.assertEqual(R.main(["schema", "--target", tgt, "--out", f"{tmp}/s.json"]), 0)
+            self.assertEqual(R.main(["load", "--target", tgt, "--out", f"{tmp}/l.json", "--fraction", "0.001",
+                                     "--workers", "2"]), 0)
+            loaded = json.load(open(f"{tmp}/l.json"))
+            self.assertEqual(loaded["rows"]["orders"], G.count("orders", SMALL))
+            # rerun resumes: every chunk is already done, nothing is inserted twice
+            self.assertEqual(R.main(["load", "--target", tgt, "--out", f"{tmp}/l.json", "--fraction", "0.001",
+                                     "--workers", "2"]), 0)
+            with psycopg.connect(DSN, autocommit=True) as c:
+                self.assertEqual(c.execute("SELECT count(*) FROM orders").fetchone()[0], G.count("orders", SMALL))
+            cell = OL.Cell("it-cli", "LOCAL", "open", 100.0, 0, 1, 1, 3, 0.001)
+            R.main(["cell", "--target", tgt, "--out", f"{tmp}/c.json", "--cell-json", json.dumps(asdict(cell))])
+            out = json.load(open(f"{tmp}/c.json"))
+            self.assertEqual(out["status"], "ok", out.get("error"))
+            self.assertEqual(out["invariants"]["violations"], [])
+            self.assertIsNotNone(out["generator"]["lag_p99_ms"])

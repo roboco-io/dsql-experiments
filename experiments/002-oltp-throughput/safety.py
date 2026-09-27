@@ -227,8 +227,9 @@ def check_can_provision(data: dict, scope: str) -> None:
         return
     if data["config_status"].get(BATCH) != "ready":
         raise SafetyError("provision BATCH (batch-up) first")
-    if any(r["config"] == scope and r["type"] != "ec2_instance" for r in data["resources"]):
-        raise SafetyError(f"{scope} already provisioned in this run prefix; start a new prefix")
+    if any(r["config"] == scope and r["type"] != "ec2_instance" and r["state"] != "deleted"
+           for r in data["resources"]):
+        raise SafetyError(f"{scope} still has live DB resources in this run prefix")
 
 
 def cleanup_plan(data: dict, scope: str) -> list[dict]:

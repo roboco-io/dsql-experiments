@@ -7,10 +7,13 @@ import tempfile
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import conn as C  # noqa: E402
 import cost  # noqa: E402
 import datagen as G  # noqa: E402
+import e002 as E  # noqa: E402
 import infra as IN  # noqa: E402
 import invariants as INV  # noqa: E402
 import openloop as OL  # noqa: E402
@@ -29,6 +32,16 @@ def _manifest(tmp, lifetime=600):
 
 
 class SafetyScopes(unittest.TestCase):
+    def test_config_may_be_provisioned_again_after_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = _manifest(tmp)
+            m.data["config_status"][S.BATCH] = "ready"
+            m.add_resource("A2", "db_cluster", "c", state="created")
+            with self.assertRaises(S.SafetyError):
+                S.check_can_provision(m.data, "A2")
+            m.set_state("A2", "db_cluster", "c", "deleted")
+            S.check_can_provision(m.data, "A2")      # pilot deletes A2, the main run provisions it again
+
     def test_prefix_is_e002(self):
         self.assertTrue(S.new_run_prefix().startswith("e002-"))
         with self.assertRaises(S.SafetyError):
@@ -391,3 +404,104 @@ class Infra(unittest.TestCase):
         self.assertEqual(IN.db_rate("R1"), cost.DB_RATE_USD_PER_H["R1"])
         self.assertEqual(IN.db_rate("A1"), cost.DB_RATE_USD_PER_H["A1_instance"])
         self.assertEqual(IN.db_rate("A2"), cost.DB_RATE_USD_PER_H["A2_instance_worst"])
+
+
+class Orchestrator(unittest.TestCase):
+    def test_parallel_phase_isolates_runner_lost(self):
+        def fn(cfg):
+            if cfg == "A2":
+                raise E.RunnerLost("spot reclaimed")
+            return cfg.lower()
+        out = E.parallel(["D1", "R1", "A1", "A2"], fn)
+        self.assertEqual([out[c]["value"] for c in ("D1", "R1", "A1")], ["d1", "r1", "a1"])
+        self.assertTrue(out["A2"]["runner_lost"])
+        self.assertFalse(out["A2"]["ok"])
+
+    def test_full_load_refused_when_extrapolation_exceeds_guard(self):
+        usd = E.load_estimate(slice_dpu=50_000, fraction=0.02, usd_per_million=10.0)
+        self.assertAlmostEqual(usd, 25.0)
+        data = {"resources": [], "measured_usd": {"D1_dpu": 25.0}}
+        self.assertFalse(cost.Guard(lambda: data, cap=45.0).reserve("D1", usd)["ok"])
+
+    def test_main_cells_shuffle_rates_per_rep_but_cover_all(self):
+        a = E.main_cells("D1", [50, 100, 120], 1, 180, 600, "s")
+        b = E.main_cells("D1", [50, 100, 120], 2, 180, 600, "s")
+        self.assertEqual(sorted(c.rate for c in a), [50, 100, 120])
+        self.assertTrue(all(c.mode == "open" for c in a))
+        self.assertEqual({c.cell_id for c in a} & {c.cell_id for c in b}, set())
+
+    def test_explore_cells_are_closed_loop_16_64_256(self):
+        cells = E.explore_cells("R1", 1, 120, 300)
+        self.assertEqual([c.concurrency for c in cells], [16, 64, 256])
+        self.assertTrue(all(c.mode == "closed" for c in cells))
+
+    def test_boundary_loop_stops_on_guard(self):
+        calls = []
+
+        def run_rate(rate):
+            calls.append(rate)
+            return _res(rate=rate, rep=1)
+        out = E.boundary_loop("D1", 100.0, run_rate, stop_fn=lambda: len(calls) >= 2)
+        self.assertEqual(calls, [150.0, 187.5])
+        self.assertTrue(out["stopped_early"])
+
+    def test_boundary_loop_stops_when_run_rate_returns_none(self):
+        out = E.boundary_loop("D1", 100.0, lambda rate: None, stop_fn=lambda: False)
+        self.assertTrue(out["stopped_early"])
+        self.assertEqual(out["results"], [])
+
+    def test_boundary_loop_finds_fail_then_midpoint(self):
+        def run_rate(rate):
+            return _res(rate=rate, rep=1, p99=10.0 if rate <= 160 else 500.0)
+        out = E.boundary_loop("R1", 100.0, run_rate, stop_fn=lambda: False)
+        self.assertEqual([r["cell"]["rate"] for r in out["results"]], [150.0, 187.5, 168.75])
+        self.assertFalse(out["stopped_early"])
+
+    def test_pilot_plan_sums_parts(self):
+        pilot = {"d1_dpu_per_attempt": 0.02, "a2_acu_by_rate": {"100.0": 6.0}, "fixed_usd_per_h": 3.0}
+        out = E.pilot_plan(pilot, reps=1, warmup_s=0, measure_s=3600, rates=[100.0])
+        self.assertAlmostEqual(out["d1_usd"], 100 * 3600 * 0.02 / 1e6 * 10)
+        self.assertAlmostEqual(out["a2_usd"], 6.0 * 2 * cost.ACU_USD_PER_H)
+        self.assertGreater(out["total_usd"], out["d1_usd"] + out["a2_usd"])
+
+    def test_pilot_plan_scales_acu_above_measured_rates(self):
+        pilot = {"d1_dpu_per_attempt": 0.0, "a2_acu_by_rate": {"100.0": 4.0, "400.0": 8.0}, "fixed_usd_per_h": 0.0}
+        low = E.pilot_plan(pilot, 1, 0, 3600, [400.0])["a2_usd"]
+        high = E.pilot_plan(pilot, 1, 0, 3600, [800.0])["a2_usd"]
+        self.assertAlmostEqual(high, 2 * low)
+
+    def test_cell_estimate_uses_config_rates_and_dpu(self):
+        m = {"resources": [{"config": "D1", "state": "created", "extra": {"rate_usd_per_h": 0.2}},
+                           {"config": "R1", "state": "created", "extra": {"rate_usd_per_h": 1.5}}]}
+        cell = OL.Cell("D1-m-100.0-r01", "D1", "open", 100.0, 0, 1, 0, 3600)
+        est = E.cell_estimate_usd(m, cell, {"d1_dpu_per_attempt": 0.01}, seen_attempt_tps=0.0)
+        overhead_h = (3600 + E.CELL_OVERHEAD_S) / 3600
+        want = 0.2 * overhead_h + 100 * 1.1 * (3600 + E.CELL_OVERHEAD_S) * 0.01 / 1e6 * 10
+        self.assertAlmostEqual(est, want)
+
+    def test_q_ratios_mark_missing_denominators(self):
+        rows = E.q_ratios({"D1": {"q": 300, "status": "lower_bound"}, "R1": {"q": 100, "status": "confirmed"},
+                           "A1": {"q": None, "status": "none"}})
+        self.assertEqual(rows["R1"]["throughput_ratio"], 3.0)
+        self.assertEqual(rows["R1"]["note"], "D1 lower_bound")
+        self.assertIsNone(rows["A1"]["throughput_ratio"])
+
+
+class Conn(unittest.TestCase):
+    def test_dsql_factory_signs_a_fresh_token_per_connection(self):
+        # DSQL tokens expire and connections last at most one hour: every new connection needs a new token
+        target = {"kind": "dsql", "host": "h", "dbname": "postgres", "region": "r", "sslrootcert": "ca"}
+        tokens = iter(["t1", "t2"])
+        with mock.patch.object(C, "_credentials", side_effect=lambda t: ("admin", next(tokens))), \
+                mock.patch.object(C.psycopg, "connect", side_effect=lambda **kw: kw["password"]):
+            connect = C.sync_connect_factory(target)
+            self.assertEqual([connect(), connect()], ["t1", "t2"])
+
+    def test_pg_factory_fetches_the_secret_once(self):
+        target = {"kind": "pg", "host": "h", "dbname": "d", "region": "r", "sslrootcert": "ca", "secret_arn": "s"}
+        with mock.patch.object(C, "_credentials", return_value=("u", "p")) as cred, \
+                mock.patch.object(C.psycopg, "connect", side_effect=lambda **kw: kw["password"]):
+            connect = C.sync_connect_factory(target)
+            connect()
+            connect()
+            self.assertEqual(cred.call_count, 1)

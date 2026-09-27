@@ -35,16 +35,25 @@ def conn_kwargs(target: dict, user, password) -> dict:
             "autocommit": True, "application_name": "e002"}
 
 
-def sync_connect_factory(target: dict):
+def _kwargs_fn(target: dict):
+    """DSQL: sign a new IAM token for every connection (tokens expire; DSQL ends connections after an hour).
+    PostgreSQL: fetch the secret once."""
+    if target.get("kind") == "dsql":
+        return lambda: conn_kwargs(target, *_credentials(target))
     kw = conn_kwargs(target, *_credentials(target))
-    return lambda: psycopg.connect(**kw)
+    return lambda: kw
+
+
+def sync_connect_factory(target: dict):
+    kw = _kwargs_fn(target)
+    return lambda: psycopg.connect(**kw())
 
 
 def async_connect_factory(target: dict):
-    kw = conn_kwargs(target, *_credentials(target))
+    kw = _kwargs_fn(target)
 
     async def connect():
-        return await psycopg.AsyncConnection.connect(**kw)
+        return await psycopg.AsyncConnection.connect(**kw())
     return connect
 
 

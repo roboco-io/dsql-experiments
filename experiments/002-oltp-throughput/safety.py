@@ -144,7 +144,7 @@ class Manifest:
             "caller_arn": identity_arn, "created_at": iso(now),
             "expires_at": iso(now + timedelta(minutes=lifetime_min)),
             "resources": [], "config_status": {}, "connections": {}, "events": [],
-            "dsql_dpu_usd": 0.0,
+            "measured_usd": {},
         })
         m.save()
         return m

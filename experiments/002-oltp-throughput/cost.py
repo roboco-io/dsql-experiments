@@ -1,21 +1,40 @@
-"""Spend estimation and the per-cell budget guard for E002 (pure; no AWS calls).
+"""Spend estimation and the shared budget guard for E002 (pure; no AWS calls).
 
-Rates: 2026-09-25 AWS Price List API, ap-northeast-2, On-Demand, USD. Rates are estimates for the guard;
-actual charges are reconciled later from CloudWatch (ACU, DPU) and Cost Explorer.
+Rates: AWS Price List API, ap-northeast-2, On-Demand, USD (instances/ACU/I/O 2026-09-27, gp3 2026-09-28).
+Estimates drive the guard; CloudWatch-measured DPU, ACU and I/O replace them as the run progresses, and actual
+charges are reconciled later with Cost Explorer.
 """
 from __future__ import annotations
 
+import threading
+
 from safety import parse_iso, utcnow
 
-HARD_CAP_USD = 50.0           # user-set per-experiment cap (2026-09-26; was 5.0)
+HARD_CAP_USD = 50.0           # user-set per-experiment cap (2026-09-26)
 BUDGET_CAP_USD = 45.0         # guard threshold (90%) leaves headroom for billing lag
 CLEANUP_HOURS = 0.5           # active resources keep billing while being deleted
 PUBLIC_IPV4_USD_PER_H = 0.005
 EBS_ROOT_USD_PER_H = 0.002    # 8 GiB gp3 root volume, rounded up (not separately verified)
+HOURS_PER_MONTH = 730
+ACU_USD_PER_H = 0.20                  # Aurora Serverless v2 Standard
+AURORA_IO_USD_PER_MILLION = 0.24      # Aurora Standard I/O
+DSQL_USD_PER_MILLION_DPU = 10.0       # confirmed in E004
+# RDS gp3, Single-AZ prices; Multi-AZ bills the same items twice (copies=2).
+GP3_PRICES = {"gb_month": 0.131, "iops_month": 0.023, "mibps_month": 0.091}
+
+
+def gp3_usd_per_h(gib, iops, mibps, prices, copies) -> float:
+    """RDS gp3 includes 3,000 IOPS/125 MiB/s below 400 GiB and 12,000 IOPS/500 MiB/s at 400 GiB or more."""
+    base_iops, base_mibps = (12000, 500) if gib >= 400 else (3000, 125)
+    monthly = (gib * prices["gb_month"] + max(0, iops - base_iops) * prices["iops_month"]
+               + max(0, mibps - base_mibps) * prices["mibps_month"])
+    return monthly * copies / HOURS_PER_MONTH
+
+
 DB_RATE_USD_PER_H = {
-    "R1": 0.203 + 0.01,       # db.t4g.medium Multi-AZ + gp3 20 GiB x2 (storage rounded up)
-    "A1": 0.147,              # Aurora db.t4g.medium I/O-Optimized
-    "A2": 0.26 * 4,           # Serverless v2 I/O-Optimized at max 4 ACU (worst case for the guard)
+    "R1": 1.079 + gp3_usd_per_h(400, 12000, 500, GP3_PRICES, 2),   # db.r6g.xlarge Multi-AZ + gp3 x2
+    "A1_instance": 0.627,                                           # Aurora db.r6g.xlarge Standard
+    "A2_instance_worst": ACU_USD_PER_H * 32,                        # until CloudWatch ACU replaces it
 }
 
 
@@ -37,7 +56,8 @@ def resource_usd(r: dict, now) -> float:
 
 def spent_usd(data: dict, now=None) -> float:
     now = now or utcnow()
-    return sum(resource_usd(r, now) for r in data["resources"]) + data.get("dsql_dpu_usd", 0.0)
+    return (sum(resource_usd(r, now) for r in data["resources"])
+            + sum(data.get("measured_usd", {}).values()))
 
 
 def active_rate(data: dict) -> float:
@@ -48,11 +68,28 @@ def dpu_cost_usd(dpu: float, usd_per_million: float) -> float:
     return dpu / 1_000_000 * usd_per_million
 
 
-def guard(data: dict, cell_seconds: float, est_cell_dpu: float = 0.0, dpu_usd_per_million: float = 0.0,
-          cap: float = BUDGET_CAP_USD, now=None) -> dict:
-    spent = spent_usd(data, now)
-    nxt = active_rate(data) * cell_seconds / 3600 + dpu_cost_usd(est_cell_dpu, dpu_usd_per_million)
-    reserve = active_rate(data) * CLEANUP_HOURS
-    projected = spent + nxt + reserve
-    return {"spent_usd": round(spent, 4), "next_cell_usd": nxt, "reserve_usd": reserve,
-            "projected_usd": round(projected, 4), "cap_usd": cap, "ok": projected <= cap}
+class Guard:
+    """One guard for all config threads. `reserve` books the next unit of work; `release` ends it."""
+
+    def __init__(self, data_fn, cap: float = BUDGET_CAP_USD):
+        self.data_fn, self.cap = data_fn, cap
+        self.inflight: dict[str, float] = {}
+        self.lock = threading.Lock()
+
+    def reserve(self, scope: str, usd: float) -> dict:
+        with self.lock:
+            data = self.data_fn()
+            spent = spent_usd(data)
+            inflight = sum(v for k, v in self.inflight.items() if k != scope)
+            reserve = active_rate(data) * CLEANUP_HOURS
+            projected = spent + inflight + usd + reserve
+            out = {"spent_usd": round(spent, 4), "inflight_usd": round(inflight, 4), "next_usd": round(usd, 4),
+                   "reserve_usd": reserve, "projected_usd": round(projected, 4), "cap_usd": self.cap,
+                   "ok": projected <= self.cap}
+            if out["ok"]:
+                self.inflight[scope] = usd
+            return out
+
+    def release(self, scope: str) -> None:
+        with self.lock:
+            self.inflight.pop(scope, None)

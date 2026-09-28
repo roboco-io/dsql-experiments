@@ -608,11 +608,20 @@ class ReviewFixesLoadAndOps(unittest.TestCase):
                 raise seq.pop(0)
         self.assertEqual(R.insert_with_retry(insert, reconnect=lambda: None, sleep=lambda s: None), "landed")
 
-    def test_first_attempt_unique_violation_is_an_error(self):
+    def test_first_attempt_unique_violation_means_the_chunk_is_already_loaded(self):
+        # chunks are single transactions over disjoint keys: 23505 can only come from the same chunk's earlier
+        # commit (a resumed load whose worker died before recording progress)
         def insert():
             raise _Err("23505")
-        with self.assertRaises(_Err):
-            R.insert_with_retry(insert, reconnect=lambda: None, sleep=lambda s: None)
+        self.assertEqual(R.insert_with_retry(insert, reconnect=lambda: None, sleep=lambda s: None), "landed")
+
+    def test_progress_is_read_from_every_worker_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = os.path.join(tmp, "load.json.progress")
+            json.dump(["orders:0:10"], open(base, "w"))
+            open(base + ".w0", "w").write("orders:10:20\n")
+            open(base + ".w3", "w").write("orders:20:30\norders:30:4")      # torn last line is ignored
+            self.assertEqual(R.read_progress(base), {"orders:0:10", "orders:10:20", "orders:20:30"})
 
     def test_worker_reconnects_before_the_dsql_hour(self):
         self.assertTrue(R.needs_refresh(opened_at=0.0, now=R.CONN_MAX_AGE_S + 1))

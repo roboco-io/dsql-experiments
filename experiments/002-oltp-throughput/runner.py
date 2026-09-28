@@ -155,7 +155,7 @@ def cmd_schema(target, out_dir):
     c.close()
     # fresh tables: chunk progress from an earlier load no longer describes them
     for f in os.listdir(out_dir) if os.path.isdir(out_dir) else []:
-        if f.startswith("load-") and f.endswith(".progress"):
+        if f.startswith("load-") and ".progress" in f:
             os.remove(os.path.join(out_dir, f))
     return {"kind": kind, "tables": list(SC.TABLES), "index_wait_s": index_wait, "sql_check": "ok"}
 
@@ -176,25 +176,36 @@ def needs_refresh(opened_at: float, now: float) -> bool:
 
 
 def insert_with_retry(insert, reconnect, sleep=time.sleep, attempts=5) -> str:
-    """'inserted', or 'landed' when a retry after a lost COMMIT meets its own rows (23505)."""
-    retried = False
+    """'inserted', or 'landed' when the chunk's rows are already there (23505)."""
     for attempt in range(attempts):
         try:
             insert()
             return "inserted"
         except Exception as exc:  # noqa: BLE001 - retry conflicts/connection loss, re-raise the rest
-            if retried and getattr(exc, "sqlstate", None) == "23505":
+            # a chunk is one transaction over keys no other chunk uses: 23505 means this chunk is already in
+            # (a lost COMMIT that landed, or a resumed load whose worker died before recording it)
+            if getattr(exc, "sqlstate", None) == "23505":
                 return "landed"
             if attempt == attempts - 1 or not _retryable(exc):
                 raise
-            retried = True
             sleep(0.5 * (attempt + 1))
             reconnect()
     raise RuntimeError("unreachable")
 
 
+def read_progress(path) -> set:
+    """Chunks recorded as done: the merged file plus each worker's append-only file (complete lines only)."""
+    done = set(json.load(open(path))) if os.path.exists(path) else set()
+    d, base = os.path.dirname(path) or ".", os.path.basename(path) + ".w"
+    for f in os.listdir(d):
+        if f.startswith(base):
+            text = open(os.path.join(d, f)).read()
+            done.update(line for line in text.split("\n")[:-1] if line)
+    return done
+
+
 def _load_worker(args):
-    target, method, fraction, chunk_list = args
+    target, method, fraction, chunk_list, log_path = args
     sc = G.S_SCALE if fraction >= 1.0 else G.scaled(fraction)
     connect = C.sync_connect_factory(target)
     state = {"c": connect(), "opened": time.monotonic()}
@@ -211,6 +222,8 @@ def _load_worker(args):
             reconnect()
         insert_with_retry(lambda: G.insert_chunk(state["c"], table, a, b, sc, method), reconnect)
         done.append(f"{table}:{a}:{b}")
+        with open(log_path, "a") as fh:                 # per chunk, so a failed worker keeps its progress
+            fh.write(f"{table}:{a}:{b}\n")
     state["c"].close()
     return done
 
@@ -220,14 +233,15 @@ def cmd_load(target, fraction, tables, workers, progress_path):
     A chunk that committed but was not recorded (crash between the two) fails with 23505 on rerun: the
     operator then restarts from `schema`."""
     sc = G.S_SCALE if fraction >= 1.0 else G.scaled(fraction)
-    done = set(json.load(open(progress_path))) if os.path.exists(progress_path) else set()
+    done = read_progress(progress_path)
     method, t0, rows = load_method(target), time.monotonic(), {}
     for table in tables:
         todo = pending_chunks(G.chunks(table, sc, LOAD_CHUNK), done)
         groups = [g for g in (todo[i::workers] for i in range(workers)) if g]
         if groups:
             with ProcessPoolExecutor(len(groups), mp_context=get_context("spawn")) as ex:
-                for part in ex.map(_load_worker, [(target, method, fraction, g) for g in groups]):
+                for part in ex.map(_load_worker, [(target, method, fraction, g, f"{progress_path}.w{i}")
+                                                  for i, g in enumerate(groups)]):
                     done.update(part)
                     _write(progress_path, sorted(done))
         rows[table] = G.count(table, sc)

@@ -41,6 +41,7 @@ LOAD_WORKERS = 32
 CW_LAG_S = 240                 # wait before reading CloudWatch for a window that just ended
 PRIOR_DPU_PER_ATTEMPT = 0.095  # E004 pilot (contention workload); used until this pilot measures E002's value
 LOAD_HOURS_EST = 2.0           # guard booking for one control's schema + load (estimate, re-measured)
+LOAD_REPEAT_FACTOR = 3.0       # a reload of a config whose full load was already timed books 3x that time
 
 
 class BudgetStop(RuntimeError):
@@ -147,7 +148,9 @@ def cell_estimate_usd(data, cell, pilot, seen_attempt_tps) -> float:
 
 
 def load_booking_usd(data, cfg) -> float:
-    return config_rate(data, cfg) * LOAD_HOURS_EST
+    prior = data.get("loads", {}).get(f"{cfg}:1.0")
+    hours = LOAD_REPEAT_FACTOR * prior["seconds"] / 3600 if prior and prior.get("seconds") else LOAD_HOURS_EST
+    return config_rate(data, cfg) * hours
 
 
 def aligned_window(w0: str, w1: str):

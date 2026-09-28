@@ -100,6 +100,8 @@ E004 하네스(`experiments/004-transaction-contention/`)를 복사해 확장한
 ## 비용 가드
 
 - 상한 USD 50, 가드 USD 45. 네 구성의 누적 비용을 셀마다 다시 계산하고 가드를 넘으면 새 셀을 시작하지 않는다.
+- 2026-09-28 사용자 결정으로 E002 상한을 USD 60(가드 USD 54, `--budget-cap 54`)으로 올렸다. 파일럿과 두 차례 Spot 회수·인덱스 보강으로 누적 추정이 USD 28.3에 이르러, 본 측정 1회 × (워밍업 120 s + 측정 300 s)와 경계 탐색을 USD 45 안에서 마칠 수 없었기 때문이다.
+- 이미 전체 적재 시간을 잰 구성을 다시 적재할 때는 가드 예약을 그 시간의 3배로 잡는다(`LOAD_REPEAT_FACTOR`). 파일럿 후 다시 만든 A2는 처음 적재에 552 s가 걸렸다.
 - 단가(2026-09-27 AWS Price List API, 서울, On-Demand, USD): RDS PostgreSQL `db.r6g.xlarge` Multi-AZ $1.079/h; Aurora PostgreSQL `db.r6g.xlarge` Standard $0.627/h; Aurora Serverless v2 Standard $0.20/ACU-h; Aurora Standard I/O $0.24/백만 I/O; Aurora 스토리지 $0.12/GB-월. DSQL은 백만 DPU당 $10(E004에서 확인). gp3 스토리지·IOPS와 EC2 Spot 단가는 실행 직전에 조회한다.
 - 사전 추정(가동 5시간 가정, D1 DPU·I/O 제외): R1 약 $5.4, A1 약 $6.3, A2 $8–64(ACU에 따름). 이 추정은 파일럿 전 값이며, 파일럿 결과로 측정 시간과 반복을 다시 정한다.
 

@@ -699,6 +699,12 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         data = {"resources": [{"config": "R1", "state": "created", "extra": {"rate_usd_per_h": 1.5}}]}
         self.assertAlmostEqual(E.load_booking_usd(data, "R1"), 1.5 * E.LOAD_HOURS_EST)
 
+    def test_a_reload_is_booked_from_the_measured_load_time(self):
+        # A2 was re-created after the pilot; its earlier full load took 552 s
+        data = {"resources": [{"config": "A2", "state": "created", "extra": {"rate_usd_per_h": 12.8}}],
+                "loads": {"A2:1.0": {"seconds": 552.1}}}
+        self.assertAlmostEqual(E.load_booking_usd(data, "A2"), 12.8 * E.LOAD_REPEAT_FACTOR * 552.1 / 3600)
+
     def test_aligned_window_stays_inside_the_measure_window(self):
         start, end = E.aligned_window("2026-09-28T10:00:20Z", "2026-09-28T10:02:20Z")
         self.assertEqual((S.iso(start), S.iso(end)), ("2026-09-28T10:01:00Z", "2026-09-28T10:02:00Z"))

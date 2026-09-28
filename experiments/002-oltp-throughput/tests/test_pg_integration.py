@@ -177,3 +177,13 @@ class RunnerIntegration(unittest.TestCase):
             self.assertEqual(out["status"], "ok", out.get("error"))
             self.assertEqual(out["invariants"]["violations"], [])
             self.assertIsNotNone(out["generator"]["lag_p99_ms"])
+            self.assertEqual(set(loaded["analyze"].values()), {"ok"})
+
+
+@unittest.skipUnless(DSN, "set E002_PG_DSN to run")
+class Rehearsal(unittest.TestCase):
+    def test_rehearsal_produces_qref_and_q(self):
+        import rehearse
+        out = rehearse.run(DSN, fraction=0.02, warmup_s=2, measure_s=5, slo_factor=20.0)
+        self.assertIsNotNone(out["qref"]["qref"], out["verdicts"])
+        self.assertIn(out["q"]["status"], ("confirmed", "provisional", "lower_bound"))

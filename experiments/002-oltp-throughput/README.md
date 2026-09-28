@@ -114,7 +114,38 @@ E004와 같은 방식이다. 모든 리소스에 `Experiment=E002` 태그를 달
 
 ## 재현 절차
 
-구현 후 작성한다.
+작업 디렉터리는 `experiments/002-oltp-throughput/`이다. `ACCT`는 실행 직전에 사용자에게 확인받은 계정 ID이고, `PFX`는 `init`이 출력하는 실행 접두사다. 둘 다 저장소에 기록하지 않는다.
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+A="--account-id $ACCT"
+.venv/bin/python e002.py init $A --max-lifetime-minutes 900          # PFX 출력
+.venv/bin/python e002.py discover $A --prefix $PFX
+.venv/bin/python e002.py batch-up $A --prefix $PFX --configs D1,A2
+.venv/bin/python e002.py pilot $A --prefix $PFX                      # 결정 지점: 비용 추정을 보고 반복·시간 결정
+.venv/bin/python e002.py batch-up $A --prefix $PFX --configs D1,R1,A1,A2
+.venv/bin/python e002.py load $A --prefix $PFX --configs R1,A1,A2
+.venv/bin/python e002.py explore $A --prefix $PFX                    # Qref 확정(qref.json)
+.venv/bin/python e002.py measure $A --prefix $PFX --reps N --warmup-s W --measure-s M
+.venv/bin/python e002.py summarize --prefix $PFX
+.venv/bin/python e002.py batch-down $A --prefix $PFX                 # 삭제 후 잔여 검증까지 수행
+.venv/bin/python e002.py verify $A --prefix $PFX                     # remaining_count=0 확인
+```
+
+- `pilot`은 D1에 S 데이터의 2%를 먼저 적재해 전체 적재 DPU를 추정하고, 가드를 넘을 것으로 추정되면 전체 적재를 거부한다. 파일럿이 끝나면 A2를 삭제하고 D1 러너를 종료한다. D1 클러스터는 데이터를 유지한 채 결정을 기다린다.
+- 각 단계는 끝난 작업을 건너뛰므로, 실패한 단계는 원인을 고친 뒤 같은 명령으로 다시 실행한다. Spot 러너를 잃은 구성은 `replace-runner --config C`로 교체한다.
+- 성공, 실패, 중단과 관계없이 실험을 멈추면 즉시 `batch-down`과 `verify`를 실행한다. `status`는 현재 추정 비용과 남은 수명을 보여 준다.
+
+### 검증
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v                                  # 오프라인
+docker run -d --rm --name e002-pg -e POSTGRES_PASSWORD=e002 -p 55433:5432 postgres:16 -c max_connections=600
+E002_PG_DSN=postgresql://postgres:e002@localhost:55433/postgres .venv/bin/python -m unittest tests.test_pg_integration -v
+.venv/bin/python rehearse.py --dsn postgresql://postgres:e002@localhost:55433/postgres --slo-factor 20
+```
+
+`rehearse.py`는 AWS 없이 스키마 생성, 적재, 예비 탐색, `Qref`, 본 측정 셀, Q 선택까지 같은 러너 코드로 실행한다. 노트북에서는 부하 발생기와 DB가 CPU를 나눠 쓰므로 SLO와 발행 지연 한도를 `--slo-factor`배로 완화한다. 리허설 수치는 결과로 쓰지 않는다.
 
 ## 실행 기록
 

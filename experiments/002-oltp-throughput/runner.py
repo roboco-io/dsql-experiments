@@ -193,7 +193,22 @@ def cmd_load(target, fraction, tables, workers, progress_path):
                     done.update(part)
                     _write(progress_path, sorted(done))
         rows[table] = G.count(table, sc)
-    return {"rows": rows, "seconds": round(time.monotonic() - t0, 1), "method": method, "fraction": fraction}
+    return {"rows": rows, "seconds": round(time.monotonic() - t0, 1), "method": method, "fraction": fraction,
+            "analyze": analyze(target)}
+
+
+def analyze(target) -> dict:
+    """Same preparation on every service: fresh planner statistics after the bulk load (errors recorded, e.g.
+    if a service rejects ANALYZE)."""
+    c, out = C.sync_connect_factory(target)(), {}
+    for t in SC.TABLES:
+        try:
+            c.execute(f"ANALYZE {t}")
+            out[t] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            out[t] = f"error:{getattr(exc, 'sqlstate', None) or type(exc).__name__}"
+    c.close()
+    return out
 
 
 def cmd_cell(target, cell_json, out):

@@ -64,14 +64,13 @@ def check(facts: dict, ledger: dict) -> dict:
 
 
 def _batched(conn, select_ids: str, apply: str, batch: int) -> int:
-    n = 0
-    while True:
-        ids = [r[0] for r in conn.execute(f"{select_ids} LIMIT {batch}").fetchall()]
-        if not ids:
-            return n
+    """Select the ids once, then apply in batches: re-running the select per batch (a receipts join) made a
+    D1 reset outlive the cell timeout (2026-09-28). Nothing else writes while a reset runs."""
+    ids = [r[0] for r in conn.execute(select_ids).fetchall()]
+    for i in range(0, len(ids), batch):
         with conn.transaction():
-            conn.execute(apply, (ids,))
-        n += len(ids)
+            conn.execute(apply, (ids[i:i + batch],))
+    return len(ids)
 
 
 def reset(conn, batch: int = 2000) -> dict:

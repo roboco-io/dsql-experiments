@@ -715,6 +715,31 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         self.assertEqual(m.data["steps"]["A2"], [])
         self.assertEqual(m.data["steps"]["D1"], ["ready"])
 
+    def test_reset_batches_select_their_ids_once(self):
+        # re-running the receipts join per batch made a D1 reset outlive the cell timeout (2026-09-28)
+        import contextlib
+        import invariants as INV
+
+        class Conn:
+            def __init__(self):
+                self.selects, self.applied = 0, []
+
+            def execute(self, sql, params=None):
+                if sql.startswith("SELECT"):
+                    self.selects += 1
+                    rows = [(i,) for i in range(5)]
+                    return mock.Mock(fetchall=lambda: rows)
+                self.applied.append(list(params[0]))
+                return mock.Mock()
+
+            def transaction(self):
+                return contextlib.nullcontext()
+
+        c = Conn()
+        self.assertEqual(INV._batched(c, "SELECT id FROM t", "DELETE FROM t WHERE id = ANY(%s)", 2), 5)
+        self.assertEqual(c.selects, 1)
+        self.assertEqual(c.applied, [[0, 1], [2, 3], [4]])
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

@@ -131,9 +131,14 @@ def pending_chunks(chunks, done: set) -> list:
     return [c for c in chunks if f"{c[0]}:{c[1]}:{c[2]}" not in done]
 
 
+VALID_INDEX_SQL = ("SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
+                   "WHERE c.relname = ANY(%s) AND i.indisvalid")
+
+
 def wait_indexes(c, t0):
-    while c.execute("SELECT count(*) FROM pg_indexes WHERE indexname = ANY(%s)",
-                    (list(SC.INDEX_NAMES),)).fetchone()[0] < len(SC.INDEX_NAMES):
+    """Wait until every secondary index is valid. DSQL shows an ASYNC index in pg_indexes immediately, while
+    its build job is still processing (observed 2026-09-28), so visibility alone is not enough."""
+    while c.execute(VALID_INDEX_SQL, (list(SC.INDEX_NAMES),)).fetchone()[0] < len(SC.INDEX_NAMES):
         if time.monotonic() - t0 > INDEX_WAIT_S:
             raise RuntimeError("index not visible after CREATE INDEX ASYNC")
         time.sleep(5)

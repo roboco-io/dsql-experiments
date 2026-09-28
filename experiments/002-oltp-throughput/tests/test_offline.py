@@ -840,3 +840,26 @@ class SchemaForeignKeyIndexes(unittest.TestCase):
 
     def test_index_names_listed_for_the_async_wait(self):
         self.assertEqual(set(SC.INDEX_NAMES), {"orders_customer_created", "ledger_order"})
+
+
+class IndexWait(unittest.TestCase):
+    def test_wait_until_indexes_are_valid_not_just_visible(self):
+        # DSQL lists an ASYNC index in pg_indexes at once while its build job is still processing
+        counts = iter([0, 1, 2])
+        seen = []
+
+        class Cur:
+            def __init__(self, n):
+                self.n = n
+
+            def fetchone(self):
+                return (self.n,)
+
+        class Conn:
+            def execute(self, sql, params=None):
+                seen.append(sql)
+                return Cur(next(counts))
+        with mock.patch.object(R.time, "sleep"):
+            R.wait_indexes(Conn(), time.monotonic())
+        self.assertEqual(len(seen), 3)
+        self.assertIn("indisvalid", seen[0])

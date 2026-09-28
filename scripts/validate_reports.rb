@@ -55,7 +55,7 @@ files.each do |file|
   errors << "#{name}: completed reports require run_ids" unless runs.is_a?(Array) && !runs.empty? && runs.all? { |run| run.is_a?(String) && !run.strip.empty? }
   errors << "#{name}: cleanup must be verified with zero remaining resources" unless data["cleanup_verified"] == true && data["remaining_resources"] == 0
   body = source[front_matter.end(0)..]
-  ["실행 조건", "성능 결과", "개발·운영 편의성", "비용", "결론과 한계", "정리 기록"].each do |heading|
+  ["결과 요약", "실행 조건", "성능 결과", "개발·운영 편의성", "비용", "결론과 한계", "정리 기록"].each do |heading|
     errors << "#{name}: missing result section #{heading}" unless body.match?(/^## #{Regexp.escape(heading)}\s*$/)
   end
   errors << "#{name}: remove the unmeasured placeholder before completing" if body.include?("아직 실험을 실행하지 않았습니다")

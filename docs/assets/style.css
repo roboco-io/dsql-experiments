@@ -101,6 +101,18 @@ h1, h2, h3 { line-height: 1.35; word-break: keep-all; overflow-wrap: anywhere; }
 .prose h2 { font-size: 25px; margin: 38px 0 16px; padding-top: 8px; }
 .prose h3 { font-size: 20px; margin-top: 28px; }
 .prose p, .prose li { line-height: 1.85; }
+.prose details.report-section { border-top: 1px solid var(--line); }
+.prose details.report-section:last-of-type { border-bottom: 1px solid var(--line); }
+.prose details.report-section > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; }
+.prose details.report-section > summary::-webkit-details-marker { display: none; }
+.prose details.report-section > summary::before { content: "▸"; color: var(--muted); font-size: 18px; transition: transform .15s; }
+.prose details.report-section[open] > summary::before { transform: rotate(90deg); }
+.prose details.report-section > summary h2 { margin: 18px 0; padding-top: 0; }
+.prose details.report-section > :last-child { margin-bottom: 24px; }
+.fold-controls { display: flex; gap: 8px; justify-content: flex-end; margin-bottom: 8px; }
+.fold-controls button { font: inherit; font-size: 13px; color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.fold-controls button:hover { color: var(--accent); border-color: var(--accent); }
+@media print { .fold-controls { display: none; } }
 .prose img { max-width: 100%; height: auto; }
 .prose table { display: block; overflow-x: auto; border-collapse: collapse; max-width: 100%; font-size: 14px; margin-block: 24px; }
 .prose th, .prose td { border: 1px solid var(--line); padding: 10px 14px; text-align: left; min-width: 100px; }

@@ -16,5 +16,46 @@ layout: default
   {% unless page.status == 'completed' %}
   <aside class="notice" aria-label="공개 상태">{% if page.status == 'running' %}실험 진행 중입니다. 아래 기록은 잠정 결과이며 최종 결론이 아닙니다.{% else %}계획 단계입니다. 아직 공개된 측정 결과가 없습니다.{% endif %}</aside>
   {% endunless %}
-  <div class="prose">{{ content }}</div>
+  <div class="prose" id="report-body">{{ content }}</div>
 </article>
+<script>
+// Fold every "## section" into <details>. The narrative summary and the question stay open; the rest start
+// closed so the page stays short. Without JavaScript every section is simply shown.
+(function () {
+  var body = document.getElementById('report-body');
+  var heads = Array.prototype.filter.call(body.children, function (el) { return el.tagName === 'H2'; });
+  if (!heads.length) return;
+  var OPEN = ['결과 요약', '확인할 질문'];
+  heads.forEach(function (h) {
+    var d = document.createElement('details');
+    d.className = 'report-section';
+    d.id = h.id ? h.id + '-section' : '';
+    if (OPEN.indexOf(h.textContent.trim()) >= 0) d.open = true;
+    var s = document.createElement('summary');
+    h.parentNode.insertBefore(d, h);
+    d.appendChild(s);
+    s.appendChild(h);
+    while (d.nextSibling && d.nextSibling.tagName !== 'H2') d.appendChild(d.nextSibling);
+  });
+  var bar = document.createElement('div');
+  bar.className = 'fold-controls';
+  bar.innerHTML = '<button type="button" data-open="1">모두 펼치기</button><button type="button" data-open="0">모두 접기</button>';
+  bar.addEventListener('click', function (e) {
+    var v = e.target.getAttribute('data-open');
+    if (v === null) return;
+    body.querySelectorAll('details.report-section').forEach(function (d) { d.open = v === '1'; });
+  });
+  body.insertBefore(bar, body.firstChild);
+  function openHash() {
+    if (!location.hash) return;
+    var t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    for (var n = t; n; n = n.parentElement) if (n.tagName === 'DETAILS') n.open = true;
+    if (t) t.scrollIntoView();
+  }
+  window.addEventListener('hashchange', openHash);
+  window.addEventListener('beforeprint', function () {
+    body.querySelectorAll('details.report-section').forEach(function (d) { d.open = true; });
+  });
+  openHash();
+})();
+</script>

@@ -55,6 +55,12 @@ files.each do |file|
   errors << "#{name}: completed reports require run_ids" unless runs.is_a?(Array) && !runs.empty? && runs.all? { |run| run.is_a?(String) && !run.strip.empty? }
   errors << "#{name}: cleanup must be verified with zero remaining resources" unless data["cleanup_verified"] == true && data["remaining_resources"] == 0
   body = source[front_matter.end(0)..]
+  view = body[/^### 프로덕션 사용 관점\s*\n(.*?)(?=^#)/m, 1]
+  if view.nil?
+    errors << "#{name}: 결과 요약 needs a '### 프로덕션 사용 관점' paragraph"
+  elsif view.strip.length > 500
+    errors << "#{name}: 프로덕션 사용 관점 must be at most 500 characters (#{view.strip.length})"
+  end
   ["결과 요약", "실행 조건", "성능 결과", "개발·운영 편의성", "비용", "결론과 한계", "정리 기록"].each do |heading|
     errors << "#{name}: missing result section #{heading}" unless body.match?(/^## #{Regexp.escape(heading)}\s*$/)
   end

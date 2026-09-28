@@ -828,3 +828,15 @@ class DsqlTransientErrors(unittest.TestCase):
             raise err
         with self.assertRaises(_Err):
             R.insert_with_retry(insert, reconnect=lambda: None, sleep=lambda s: None)
+
+
+class SchemaForeignKeyIndexes(unittest.TestCase):
+    def test_every_foreign_key_column_used_by_deletes_is_indexed(self):
+        # E002 pilot: deleting orders made the ledger FK check scan 11M rows; DSQL aborted it at its 300 s
+        # transaction limit and PostgreSQL ran one DELETE for 24 minutes
+        for kind in ("pg", "dsql"):
+            ddl = " ".join(SC.ddl(kind))
+            self.assertIn("ON ledger (order_id)", ddl, kind)
+
+    def test_index_names_listed_for_the_async_wait(self):
+        self.assertEqual(set(SC.INDEX_NAMES), {"orders_customer_created", "ledger_order"})

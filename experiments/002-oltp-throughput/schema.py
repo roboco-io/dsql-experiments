@@ -26,15 +26,23 @@ _TABLE_DDL = (
     "CREATE TABLE operation_receipts (op_id text PRIMARY KEY, kind text NOT NULL, ref_id bigint NOT NULL, "
     "created_at timestamptz NOT NULL)",
 )
-_INDEX = "INDEX orders_customer_created ON orders (customer_id, created_at)"
+# orders_customer_created serves order history; ledger_order serves the ledger->orders FK check when run-created
+# orders are deleted (without it every deleted order scans the whole ledger: E002 pilot, 2026-09-28)
+_INDEXES = (("orders_customer_created", "orders (customer_id, created_at)"),
+            ("ledger_order", "ledger (order_id)"))
+INDEX_NAMES = tuple(n for n, _ in _INDEXES)
+
+
+def index_sql(kind: str) -> list[str]:
+    word = "INDEX ASYNC" if kind == "dsql" else "INDEX"
+    return [f"CREATE {word} {name} ON {cols}" for name, cols in _INDEXES]
 
 
 def ddl(kind: str) -> list[str]:
-    """Tables then the customer-order index; DSQL builds secondary indexes with CREATE INDEX ASYNC."""
+    """Tables then secondary indexes; DSQL builds secondary indexes with CREATE INDEX ASYNC."""
     if kind not in ("pg", "dsql"):
         raise ValueError(kind)
-    index = f"CREATE {_INDEX.replace('INDEX', 'INDEX ASYNC', 1)}" if kind == "dsql" else f"CREATE {_INDEX}"
-    return list(_TABLE_DDL) + [index]
+    return list(_TABLE_DDL) + index_sql(kind)
 
 
 def drop_sql() -> list[str]:

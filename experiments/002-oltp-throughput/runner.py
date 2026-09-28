@@ -116,7 +116,6 @@ def cmd_probe(target):
 
 LOAD_CHUNK = 2000
 INDEX_WAIT_S = 1800
-INDEX_NAME = "orders_customer_created"
 
 
 def start_delay_s(cell, processes) -> float:
@@ -132,6 +131,30 @@ def pending_chunks(chunks, done: set) -> list:
     return [c for c in chunks if f"{c[0]}:{c[1]}:{c[2]}" not in done]
 
 
+def wait_indexes(c, t0):
+    while c.execute("SELECT count(*) FROM pg_indexes WHERE indexname = ANY(%s)",
+                    (list(SC.INDEX_NAMES),)).fetchone()[0] < len(SC.INDEX_NAMES):
+        if time.monotonic() - t0 > INDEX_WAIT_S:
+            raise RuntimeError("index not visible after CREATE INDEX ASYNC")
+        time.sleep(5)
+
+
+def cmd_add_indexes(target):
+    """Create any missing secondary index on an already-loaded database (ASYNC on DSQL) and wait for it."""
+    c = C.sync_connect_factory(target)()
+    kind = "dsql" if target["kind"] == "dsql" else "pg"
+    have = {r[0] for r in c.execute("SELECT indexname FROM pg_indexes").fetchall()}
+    made = []
+    for name, sql in zip(SC.INDEX_NAMES, SC.index_sql(kind)):
+        if name not in have:
+            c.execute(sql)
+            made.append(name)
+    t0 = time.monotonic()
+    wait_indexes(c, t0)
+    c.close()
+    return {"created": made, "wait_s": round(time.monotonic() - t0, 1)}
+
+
 def cmd_schema(target, out_dir):
     """Drop and create the schema. DSQL builds the index asynchronously; wait until pg_indexes shows it
     (the check E001 used for CREATE INDEX ASYNC)."""
@@ -140,10 +163,7 @@ def cmd_schema(target, out_dir):
     for s in SC.drop_sql() + SC.ddl(kind):
         c.execute(s)
     t0 = time.monotonic()
-    while not c.execute("SELECT count(*) FROM pg_indexes WHERE indexname = %s", (INDEX_NAME,)).fetchone()[0]:
-        if time.monotonic() - t0 > INDEX_WAIT_S:
-            raise RuntimeError("index not visible after CREATE INDEX ASYNC")
-        time.sleep(5)
+    wait_indexes(c, t0)
     index_wait = round(time.monotonic() - t0, 1)
     try:                                   # fail here, before any data is paid for, if the service rejects them
         INV.check(INV.collect(c), {"order_create": {"committed": 0, "ambiguous": 0},
@@ -299,7 +319,7 @@ def cmd_cell(target, cell_json, out):
 
 def main(argv=None):
     p = argparse.ArgumentParser()
-    p.add_argument("command", choices=("probe", "schema", "load", "cell"))
+    p.add_argument("command", choices=("probe", "schema", "load", "cell", "add-indexes"))
     p.add_argument("--target", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--cell-json")
@@ -311,6 +331,8 @@ def main(argv=None):
         target = json.load(fh)
     if a.command == "probe":
         res = cmd_probe(target)
+    elif a.command == "add-indexes":
+        res = cmd_add_indexes(target)
     elif a.command == "schema":
         res = cmd_schema(target, os.path.dirname(os.path.abspath(a.out)))
     elif a.command == "load":

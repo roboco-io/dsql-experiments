@@ -10,7 +10,7 @@ import threading
 
 from safety import parse_iso, utcnow
 
-HARD_CAP_USD = 50.0           # user-set per-experiment cap (2026-09-26)
+HARD_CAP_USD = 60.0           # user-set E002 cap (50 on 2026-09-26, raised to 60 on 2026-09-28)
 BUDGET_CAP_USD = 45.0         # guard threshold (90%) leaves headroom for billing lag
 CLEANUP_HOURS = 0.5           # active resources keep billing while being deleted
 PUBLIC_IPV4_USD_PER_H = 0.005

@@ -699,6 +699,9 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         data = {"resources": [{"config": "R1", "state": "created", "extra": {"rate_usd_per_h": 1.5}}]}
         self.assertAlmostEqual(E.load_booking_usd(data, "R1"), 1.5 * E.LOAD_HOURS_EST)
 
+    def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
+        self.assertEqual(cost.HARD_CAP_USD, 60.0)
+
     def test_a_reload_is_booked_from_the_measured_load_time(self):
         # A2 was re-created after the pilot; its earlier full load took 552 s
         data = {"resources": [{"config": "A2", "state": "created", "extra": {"rate_usd_per_h": 12.8}}],

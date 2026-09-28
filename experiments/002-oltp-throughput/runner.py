@@ -164,7 +164,10 @@ CONN_MAX_AGE_S = 50 * 60        # DSQL ends connections after an hour: reconnect
 
 
 def _retryable(exc) -> bool:
+    """Conflicts, connection loss, and DSQL's transient XX000 "server unavailable" (seen in E002 and E004)."""
     code = getattr(exc, "sqlstate", None)
+    if code == "XX000":
+        return "server unavailable" in str(exc)
     return code is None or code == "40001" or str(code).startswith("08")
 
 

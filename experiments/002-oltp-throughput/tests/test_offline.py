@@ -797,3 +797,25 @@ class CloudWatchPerCell(unittest.TestCase):
             E.summarize(PFX)
             row = json.load(open(os.path.join(tmp, PFX, "summary.json")))["cells"][0]
         self.assertEqual((row["verdict"], row["saturation"]), ("fail", "db_cpu"))
+
+
+class DsqlTransientErrors(unittest.TestCase):
+    def test_server_unavailable_is_retried(self):
+        # observed in the E002 pilot load and in E004: psycopg InternalError_ (XX000) "server unavailable"
+        err = _Err("XX000")
+        err.args = ("server unavailable",)
+        seq = [err]
+
+        def insert():
+            if seq:
+                raise seq.pop(0)
+        self.assertEqual(R.insert_with_retry(insert, reconnect=lambda: None, sleep=lambda s: None), "inserted")
+
+    def test_other_internal_errors_are_not_retried(self):
+        err = _Err("XX000")
+        err.args = ("something else",)
+
+        def insert():
+            raise err
+        with self.assertRaises(_Err):
+            R.insert_with_retry(insert, reconnect=lambda: None, sleep=lambda s: None)

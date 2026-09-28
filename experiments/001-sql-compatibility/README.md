@@ -100,7 +100,7 @@ aws --profile roboco --region ap-northeast-2 ec2 describe-vpcs --filters Name=ta
 - A2: CloudWatch `ServerlessDatabaseCapacity`로 ACU-시간 적분 × ACU 단가(최소 0.5 ACU 상시 과금).
 - D1: DPU 사용량(CloudWatch의 DSQL DPU 지표 — 실행 시 지표명 확인) × DPU 단가 + 저장량. 소량 검사라 저장 비용은 미미할 것으로 보이나 추정 대신 실측으로 기록.
 - VPC·서브넷·IGW·보안 그룹은 무료, 공인 IPv4 주소(RDS 퍼블릭 엔드포인트)는 시간당 과금 대상이므로 포함.
-- 실제 청구액은 Cost Explorer에 반영된 후 대조하며 그전까지 `미확인`.
+- 실제 청구액(2026-09-28 Cost Explorer 확인): RDS·Aurora 합계 약 USD 0.08, DSQL $0(월 무료 사용량 안). 사전 추정 범위(약 $0.06–0.13) 안이다.
 - 예상 가동 시간은 구성당 생성 5–20분 + 실행 수 분 + 삭제 5–15분이며, 실제 값은 manifest의 이벤트 시각으로 계산한다.
 
 ## 한계

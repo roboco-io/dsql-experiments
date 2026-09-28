@@ -699,6 +699,22 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         data = {"resources": [{"config": "R1", "state": "created", "extra": {"rate_usd_per_h": 1.5}}]}
         self.assertAlmostEqual(E.load_booking_usd(data, "R1"), 1.5 * E.LOAD_HOURS_EST)
 
+    def test_forgetting_a_deleted_config_clears_its_schema_step_too(self):
+        # after the pilot deletes A2, a re-created A2 is empty: its schema must be created again
+        import threading
+
+        class M:
+            data = {"steps": {"A2": ["schema:1.0", "provision", "load:1.0", "ready"], "D1": ["ready"]}}
+            lock = threading.RLock()
+
+            def save(self):
+                pass
+
+        m = M()
+        E._forget_config(m, "A2")
+        self.assertEqual(m.data["steps"]["A2"], [])
+        self.assertEqual(m.data["steps"]["D1"], ["ready"])
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

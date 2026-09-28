@@ -302,6 +302,13 @@ def _mark(m, cfg, step):
         m.save()
 
 
+def _forget_config(m, cfg):
+    """A config whose resources were deleted keeps none of its steps (schema, load, ready ...)."""
+    with m.lock:
+        m.data.setdefault("steps", {})[cfg] = []
+        m.save()
+
+
 def _unmark(m, cfg, *steps):
     with m.lock:
         m.data.setdefault("steps", {})[cfg] = [s for s in _steps(m, cfg) if s not in steps]
@@ -597,8 +604,7 @@ def do_pilot(sess, m, args):
     print(json.dumps(report, indent=2))
     log("pilot done: A2 is deleted and D1's runner terminated while the decision is pending (D1 keeps its data)")
     IN.cleanup(sess, m, "A2")
-    for step in ("provision", "ready", "load:1.0"):
-        _unmark(m, "A2", step)
+    _forget_config(m, "A2")
     IN.terminate_runner(sess, m, "D1", m.data["runners"]["D1"])
     _unmark(m, "D1", "ready")
     return 0

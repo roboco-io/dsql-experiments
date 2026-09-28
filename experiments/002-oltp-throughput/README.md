@@ -1,6 +1,6 @@
 # 002 — OLTP 처리량과 지연의 한계
 
-> 상태: running (2026-09-28 파일럿 시작)
+> 상태: completed — 부분 결과 (2026-09-28 실행, 12:07 UTC 잔여 리소스 0 확인). 본 측정·경계 탐색과 DSQL 연결 64·256 탐색은 DSQL 초기화 지연과 예산 상한으로 실행하지 못했다. 결과는 [공개 보고서](https://roboco.io/rds-experiments/experiments/e002/), 재측정 과제는 [이슈 #2](https://github.com/roboco-io/rds-experiments/issues/2).
 
 ## 질문과 가설
 

@@ -39,6 +39,8 @@ CELL_OVERHEAD_S = 120          # connections + invariants + reset + SSM round tr
 SAFETY = 1.25                  # headroom on pilot-based estimates
 LOAD_WORKERS = 32
 CW_LAG_S = 240                 # wait before reading CloudWatch for a window that just ended
+PRIOR_DPU_PER_ATTEMPT = 0.095  # E004 pilot (contention workload); used until this pilot measures E002's value
+LOAD_HOURS_EST = 2.0           # guard booking for one control's schema + load (estimate, re-measured)
 
 
 class BudgetStop(RuntimeError):
@@ -137,10 +139,102 @@ def cell_estimate_usd(data, cell, pilot, seen_attempt_tps) -> float:
     pilot's DPU per attempt (open loop: 1.1 x rate; closed loop: 2 x the highest attempt TPS seen so far)."""
     dur = cell.warmup_s + cell.measure_s + CELL_OVERHEAD_S
     usd = config_rate(data, cell.config) * dur / 3600
-    if cell.config == "D1" and pilot:
+    if cell.config == "D1":
+        per = (pilot or {}).get("d1_dpu_per_attempt", PRIOR_DPU_PER_ATTEMPT)
         tps = cell.rate * 1.1 if cell.mode == "open" else max(seen_attempt_tps * 2, PILOT_RATES[-1])
-        usd += cost.dpu_cost_usd(tps * dur * pilot["d1_dpu_per_attempt"], cost.DSQL_USD_PER_MILLION_DPU)
+        usd += cost.dpu_cost_usd(tps * dur * per, cost.DSQL_USD_PER_MILLION_DPU)
     return usd
+
+
+def load_booking_usd(data, cfg) -> float:
+    return config_rate(data, cfg) * LOAD_HOURS_EST
+
+
+def aligned_window(w0: str, w1: str):
+    """Whole CloudWatch minutes inside [w0, w1]: no warmup, invariants, reset or next cell leaks in."""
+    a, b = S.parse_iso(w0), S.parse_iso(w1)
+    start = a if a.second == 0 else a.replace(second=0) + timedelta(minutes=1)
+    return start, b.replace(second=0)
+
+
+def dpu_per_attempt(dpu: float, attempt_tps: float, window_s: float) -> float:
+    return dpu / (attempt_tps * window_s)
+
+
+def cloudwatch_queries(cfg, conn) -> list[dict]:
+    """Per-cell CloudWatch metrics (spec: CPU, connections, IOPS, ACU, DPU). D1 lists every metric of the cluster
+    at run time (metric="*") instead of assuming DSQL metric names."""
+    if cfg == "D1":
+        return [{"namespace": "AWS/AuroraDSQL", "metric": "*", "dims": conn["cluster_id"]}]
+    inst = conn.get("writer") or conn["instance_id"]
+    q = [{"namespace": "AWS/RDS", "metric": m, "dims": {"DBInstanceIdentifier": inst}}
+         for m in ("CPUUtilization", "DatabaseConnections", "FreeableMemory")]
+    if cfg == "R1":
+        q += [{"namespace": "AWS/RDS", "metric": m, "dims": {"DBInstanceIdentifier": inst}}
+              for m in ("ReadIOPS", "WriteIOPS", "ReadLatency", "WriteLatency", "DiskQueueDepth")]
+    else:
+        q += [{"namespace": "AWS/RDS", "metric": m, "dims": {"DBClusterIdentifier": conn["cluster_id"]}}
+              for m in ("VolumeReadIOPs", "VolumeWriteIOPs")]
+    if cfg == "A2":
+        q += [{"namespace": "AWS/RDS", "metric": "ServerlessDatabaseCapacity", "dims": {"DBInstanceIdentifier": i}}
+              for i in (conn["writer"], conn["reader"])]
+    return q
+
+
+def fetch_cloudwatch(cw, queries, start, end) -> dict:
+    """avg/max/sum per metric over [start, end] at 60 s resolution."""
+    out = {}
+    for q in queries:
+        if q["metric"] == "*":
+            items = [(x["MetricName"], x["Dimensions"]) for x in cw.list_metrics(Namespace=q["namespace"])["Metrics"]
+                     if any(d["Value"] == q["dims"] for d in x["Dimensions"])]
+        else:
+            items = [(q["metric"], [{"Name": k, "Value": v} for k, v in q["dims"].items()])]
+        for name, dims in items:
+            pts = cw.get_metric_statistics(Namespace=q["namespace"], MetricName=name, Dimensions=dims,
+                                           StartTime=start, EndTime=end, Period=60,
+                                           Statistics=["Average", "Maximum", "Sum"])["Datapoints"]
+            key = name if name not in out else f"{name}:{dims[0]['Value']}"
+            out[key] = ({"avg": sum(p["Average"] for p in pts) / len(pts), "max": max(p["Maximum"] for p in pts),
+                         "sum": sum(p["Sum"] for p in pts), "points": len(pts)} if pts else None)
+    return out
+
+
+def do_metrics(sess, m):
+    """Attach CloudWatch metrics of each cell's measure window to its saved result (works after batch-down too;
+    CloudWatch keeps 1-minute data for 15 days)."""
+    cw, n = sess.client("cloudwatch"), 0
+    for cfg in S.CONFIGS:
+        d = os.path.join(run_dir(m.prefix), "results", cfg)
+        conn = (m.data.get("connections") or {}).get(cfg)
+        if not os.path.isdir(d) or not conn:
+            continue
+        for f in sorted(os.listdir(d)):
+            path = os.path.join(d, f)
+            r = _load_json(path)
+            if r.get("status") != "ok" or r.get("cloudwatch") or not r.get("window"):
+                continue
+            start, end = aligned_window(*r["window"])
+            r["cloudwatch"] = fetch_cloudwatch(cw, cloudwatch_queries(cfg, conn), start, end)
+            S.write_private(path, r)
+            n += 1
+    log(f"CloudWatch metrics attached to {n} cells")
+    return 0
+
+
+def saturation_cause(r) -> str:
+    """First limit reached, in this order: generator, database CPU, connection pool queueing, lock waits."""
+    g = r.get("generator") or {}
+    if (g.get("cpu_pct") or 0) > slo.GEN_CPU_MAX or (g.get("lag_p99_ms") or 0) > slo.GEN_LAG_P99_MAX_MS:
+        return "generator"
+    if ((r.get("cloudwatch") or {}).get("CPUUtilization") or {}).get("max", 0) >= 90:
+        return "db_cpu"
+    per = (r.get("metrics") or {}).get("per_kind") or {}
+    if any((k.get("queue_p99_ms") or 0) >= 100 for k in per.values()):
+        return "connection_pool"
+    if ((r.get("monitor") or {}).get("lock_waiters_max") or 0) > 0:
+        return "lock_wait"
+    return "unknown"
 
 
 def q_ratios(qs: dict) -> dict:
@@ -213,9 +307,16 @@ def _unmark(m, cfg, *steps):
 
 def runner_alive(sess, m, cfg) -> str:
     iid = (m.data.get("runners") or {}).get(cfg)
-    if not iid:
-        raise RunnerLost(f"{cfg} has no runner; run `batch-up --configs {cfg}`")
-    res = sess.client("ec2").describe_instances(InstanceIds=[iid])["Reservations"]
+    rec = m.find(cfg, "ec2_instance", iid) if iid else None
+    if not iid or (rec and rec["state"] == "deleted"):
+        raise RunnerLost(f"{cfg} has no live runner; run `batch-up --configs {cfg}`")
+    try:
+        res = sess.client("ec2").describe_instances(InstanceIds=[iid])["Reservations"]
+    except Exception as exc:  # noqa: BLE001 - EC2 forgets terminated instances after about an hour
+        if IN.code(exc) == "InvalidInstanceID.NotFound":
+            m.event(cfg, "runner_lost", state="not_found")
+            raise RunnerLost(f"{cfg} runner no longer exists; run `replace-runner --config {cfg}`") from None
+        raise
     inst = res[0]["Instances"][0] if res else None
     state = inst["State"]["Name"] if inst else "missing"
     if state != "running":
@@ -268,7 +369,8 @@ def runner_json(sess, m, cfg, command, extra, timeout_s, what):
 
 
 def refresh_measured(sess, m):
-    """Replace estimates with CloudWatch-measured costs: D1 DPU, A2 ACU (writer and reader), A1/A2 I/O."""
+    """Replace estimates with CloudWatch-measured costs: D1 DPU, A2 ACU (writer and reader), A1/A2 I/O.
+    Pending estimates whose period CloudWatch now covers are dropped."""
     until = S.utcnow() - timedelta(minutes=3)
     for r in [r for r in m.data["resources"] if r["state"] != "deleted"]:
         start = S.parse_iso(r["recorded_at"])
@@ -289,6 +391,10 @@ def refresh_measured(sess, m):
                     m.data["measured_usd"][f"{r['config']}_io"] = io / 1e6 * cost.AURORA_IO_USD_PER_MILLION
         except Exception as exc:  # noqa: BLE001 - keep the previous estimate; the guard stays conservative
             log(f"CloudWatch refresh skipped for {r['config']} {r['type']}: {type(exc).__name__}")
+            continue
+        if r["type"] == "dsql_cluster":
+            with m.lock:
+                cost.settle_pending(m.data, S.iso(until))
     m.save()
 
 
@@ -312,6 +418,13 @@ def run_cell_on(sess, m, guard, cfg, cell, pilot, seen_attempt_tps=0.0):
     finally:
         guard.release(cfg)
     S.write_private(path, res)
+    if cfg == "D1":                # CloudWatch reports this cell's DPU minutes later: keep it booked until then
+        att = (res.get("metrics") or {}).get("attempt_tps") or 0.0
+        per = (pilot or {}).get("d1_dpu_per_attempt", PRIOR_DPU_PER_ATTEMPT)
+        with m.lock:
+            cost.add_pending(m.data, f"D1:{cell.cell_id}", cost.dpu_cost_usd(
+                att * (cell.warmup_s + cell.measure_s) * per, cost.DSQL_USD_PER_MILLION_DPU),
+                until=res.get("finished") or S.iso(S.utcnow()))
     refresh_measured(sess, m)
     met = res.get("metrics") or {}
     log(f"{cell.cell_id}: {res['status']} {slo.judge(res)['verdict']} tps={met.get('success_tps')} "
@@ -379,7 +492,14 @@ def load_config(sess, m, cfg, fraction, guard=None, usd=0.0):
             raise BudgetStop(f"guard refused {cfg} {step}: projected {g['projected_usd']} > {g['cap_usd']}")
     try:
         start = S.utcnow()
-        schema = runner_json(sess, m, cfg, "schema", "", 3600, f"schema-{cfg}")
+        # schema once per fraction: a rerun after a failed load resumes the runner's chunk progress instead
+        # of dropping tables under it (runner `schema` also clears that progress)
+        if f"schema:{fraction}" not in _steps(m, cfg):
+            schema = runner_json(sess, m, cfg, "schema", "", 3600, f"schema-{cfg}")
+            with m.lock:
+                m.data.setdefault("schemas", {})[f"{cfg}:{fraction}"] = schema
+            _mark(m, cfg, f"schema:{fraction}")
+        schema = m.data.get("schemas", {}).get(f"{cfg}:{fraction}", {})
         loaded = runner_json(sess, m, cfg, "load", f"--fraction {fraction} --workers {LOAD_WORKERS}",
                              6 * 3600, f"load-{cfg}-{fraction}")
         info = {**loaded, "index_wait_s": schema.get("index_wait_s"), "window": [S.iso(start), S.iso(S.utcnow())]}
@@ -414,6 +534,7 @@ def do_pilot(sess, m, args):
     for cfg in ("D1", "A2"):
         if "ready" not in _steps(m, cfg):
             raise S.SafetyError(f"run `batch-up --configs D1,A2` first ({cfg} not ready)")
+    refresh_measured(sess, m)
     guard = cost.Guard(lambda: m.data, cap=args.budget_cap)
     pilot = _pilot(m) or {}
     if "load_slice_dpu" not in pilot:
@@ -425,7 +546,8 @@ def do_pilot(sess, m, args):
     log(f"D1 full-load estimate from the {PILOT_FRACTION:.0%} slice: {pilot['load_slice_dpu']:.0f} DPU -> "
         f"about USD {est:.2f}")
     out = parallel(["D1", "A2"], lambda cfg: (full_load_d1(sess, m, guard, pilot) if cfg == "D1"
-                                              else load_config(sess, m, cfg, 1.0)))
+                                              else load_config(sess, m, cfg, 1.0, guard,
+                                                               load_booking_usd(m.data, cfg))))
     if _print_outcomes("pilot-load", out):
         return 1
     refresh_measured(sess, m)
@@ -440,11 +562,14 @@ def do_pilot(sess, m, args):
     if _print_outcomes("pilot-cells", out):
         return 1
     per_attempt, acu = [], {}
-    for res in out["D1"]["value"]:
-        att = (res.get("metrics") or {}).get("attempt_tps", 0) * PILOT_MEASURE_S
-        if res["status"] == "ok" and att:
-            dpu = _dpu_between(sess, m, *res["window"])
-            per_attempt.append(dpu / att)
+    for res in sorted(out["D1"]["value"], key=lambda r: r["cell"]["rate"], reverse=True):
+        att_tps = (res.get("metrics") or {}).get("attempt_tps") or 0
+        if res["status"] == "ok" and att_tps:
+            start, end = aligned_window(*res["window"])
+            time.sleep(max(0, CW_LAG_S - (S.utcnow() - end).total_seconds()))
+            dpu = IN.dsql_dpu(sess, _dsql_cluster(m), start, end)
+            per_attempt.append(dpu_per_attempt(dpu, att_tps, (end - start).total_seconds()))
+            break                                   # highest-rate valid cell: least idle DPU per attempt
     writer = m.data["connections"]["A2"]["writer"]
     for res in out["A2"]["value"]:
         if res["status"] == "ok":
@@ -457,7 +582,7 @@ def do_pilot(sess, m, args):
     fixed = cost.DB_RATE_USD_PER_H["R1"] + 2 * cost.DB_RATE_USD_PER_H["A1_instance"] + sum(
         r["extra"].get("rate_usd_per_h", 0.0) for r in m.data["resources"]
         if r["type"] == "ec2_instance" and r["state"] != "deleted") * 2
-    pilot.update(d1_dpu_per_attempt=max(per_attempt), a2_acu_by_rate=acu, fixed_usd_per_h=fixed,
+    pilot.update(d1_dpu_per_attempt=per_attempt[0], a2_acu_by_rate=acu, fixed_usd_per_h=fixed,
                  d1_full_load=m.data.get("loads", {}).get("D1:1.0"), measured_at=S.iso(S.utcnow()))
     S.write_private(os.path.join(run_dir(m.prefix), "pilot.json"), pilot)
     refresh_measured(sess, m)
@@ -477,6 +602,7 @@ def do_pilot(sess, m, args):
 
 
 def do_load(sess, m, args, cfgs):
+    refresh_measured(sess, m)
     guard = cost.Guard(lambda: m.data, cap=args.budget_cap)
     pilot = _pilot(m)
 
@@ -485,7 +611,7 @@ def do_load(sess, m, args, cfgs):
             if not pilot or "load_slice_dpu" not in pilot:
                 raise S.SafetyError("run `pilot` before a full D1 load")
             return full_load_d1(sess, m, guard, pilot)
-        return load_config(sess, m, cfg, args.fraction)
+        return load_config(sess, m, cfg, args.fraction, guard, load_booking_usd(m.data, cfg))
     return _print_outcomes("load", parallel(cfgs, one))
 
 
@@ -499,6 +625,7 @@ def _require_ready(m, cfgs):
 def do_explore(sess, m, args):
     cfgs = list(S.CONFIGS)
     _require_ready(m, cfgs)
+    refresh_measured(sess, m)
     guard = cost.Guard(lambda: m.data, cap=args.budget_cap)
     pilot = _pilot(m)
 
@@ -527,6 +654,7 @@ def do_measure(sess, m, args):
     if not q or not q.get("qref"):
         raise S.SafetyError("run `explore` first (qref.json has no Qref)")
     qref = q["qref"]
+    refresh_measured(sess, m)
     guard = cost.Guard(lambda: m.data, cap=args.budget_cap)
     pilot = _pilot(m)
 
@@ -591,7 +719,9 @@ def summarize(prefix) -> int:
                          "p99_ms": {k: v.get("p99_ms") for k, v in (m.get("per_kind") or {}).items()},
                          "p95_ms": {k: v.get("p95_ms") for k, v in (m.get("per_kind") or {}).items()},
                          "generator": r.get("generator"), "rtt_ms": r.get("rtt_ms"),
-                         "violations": (r.get("invariants") or {}).get("violations")})
+                         "violations": (r.get("invariants") or {}).get("violations"),
+                         "cloudwatch": r.get("cloudwatch"),
+                         "saturation": saturation_cause(r) if slo.judge(r)["verdict"] != "pass" else None})
     ratios = []
     main = [r for r in rows if r["mode"] == "open" and "-m-" in r["cell"] and r["verdict"] != "invalid"]
     for r in [x for x in main if x["config"] == "D1"]:
@@ -614,7 +744,7 @@ def summarize(prefix) -> int:
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("command", choices=["init", "discover", "batch-up", "load", "pilot", "explore", "measure",
-                                        "summarize", "batch-down", "verify", "replace-runner", "status"])
+                                        "summarize", "batch-down", "verify", "replace-runner", "status", "metrics"])
     p.add_argument("--account-id")
     p.add_argument("--profile", default=S.PROFILE)
     p.add_argument("--region", default=S.REGION)
@@ -658,6 +788,8 @@ def main(argv=None):
             m.save()
         print(json.dumps({k: disc[k] for k in ("common_16", "zones", "runner_az", "spot_usd_per_h")}, indent=2))
         return 0
+    if args.command == "metrics":
+        return do_metrics(sess, m)
     if args.command == "status":
         refresh_measured(sess, m)
         print(json.dumps({"spent_usd": round(cost.spent_usd(m.data), 3), "steps": m.data.get("steps"),
@@ -682,8 +814,8 @@ def main(argv=None):
         ensure_config(sess, m, args.config, args)
         return 0
     if args.command == "batch-down":
-        live = [c for c in cfgs if any(r["config"] == c and r["state"] != "deleted" for r in m.data["resources"])]
-        out = parallel(live, lambda cfg: IN.cleanup(sess, m, cfg))
+        # every config, even without manifest records: cleanup adopts tagged runners a crash left unrecorded
+        out = parallel(cfgs, lambda cfg: IN.cleanup(sess, m, cfg))
         code = _print_outcomes("batch-down", out)
         if not S.active_configs(m.data) and any(r["config"] == S.BATCH and r["state"] != "deleted"
                                                 for r in m.data["resources"]):

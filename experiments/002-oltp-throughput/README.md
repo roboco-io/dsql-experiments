@@ -127,6 +127,7 @@ A="--account-id $ACCT"
 .venv/bin/python e002.py load $A --prefix $PFX --configs R1,A1,A2
 .venv/bin/python e002.py explore $A --prefix $PFX                    # Qref 확정(qref.json)
 .venv/bin/python e002.py measure $A --prefix $PFX --reps N --warmup-s W --measure-s M
+.venv/bin/python e002.py metrics $A --prefix $PFX                    # 셀별 CloudWatch 지표 첨부(삭제 후에도 15일 동안 가능)
 .venv/bin/python e002.py summarize --prefix $PFX
 .venv/bin/python e002.py batch-down $A --prefix $PFX                 # 삭제 후 잔여 검증까지 수행
 .venv/bin/python e002.py verify $A --prefix $PFX                     # remaining_count=0 확인

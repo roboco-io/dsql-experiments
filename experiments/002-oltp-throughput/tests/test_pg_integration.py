@@ -10,6 +10,7 @@ import sys
 import json
 import tempfile
 import unittest
+from unittest import mock
 from dataclasses import asdict
 
 import psycopg
@@ -187,3 +188,40 @@ class Rehearsal(unittest.TestCase):
         out = rehearse.run(DSN, fraction=0.02, warmup_s=2, measure_s=5, slo_factor=20.0)
         self.assertIsNotNone(out["qref"]["qref"], out["verdicts"])
         self.assertIn(out["q"]["status"], ("confirmed", "provisional", "lower_bound"))
+
+
+@unittest.skipUnless(DSN, "set E002_PG_DSN to run")
+class ReviewFixIntegration(unittest.TestCase):
+    def _target(self, tmp):
+        tgt = os.path.join(tmp, "t.json")
+        json.dump({"kind": "dsn", "dsn": DSN}, open(tgt, "w"))
+        return tgt
+
+    def test_schema_checks_reset_and_invariant_sql_and_clears_load_progress(self):
+        # I9: run the reset/invariant SQL on empty tables before any data is loaded; C1: stale progress removed
+        with tempfile.TemporaryDirectory() as tmp:
+            tgt = self._target(tmp)
+            stale = f"{tmp}/results/load-x-1.0.json.progress"
+            os.makedirs(os.path.dirname(stale))
+            json.dump(["orders:0:10"], open(stale, "w"))
+            self.assertEqual(R.main(["schema", "--target", tgt, "--out", f"{tmp}/results/s.json"]), 0)
+            out = json.load(open(f"{tmp}/results/s.json"))
+            self.assertEqual(out["sql_check"], "ok")
+            self.assertFalse(os.path.exists(stale))
+
+    def test_cell_resets_leftovers_from_an_earlier_failed_cell(self):
+        # I2: a cell that died before its reset must not poison the next cell's invariants
+        with tempfile.TemporaryDirectory() as tmp:
+            tgt = self._target(tmp)
+            R.main(["schema", "--target", tgt, "--out", f"{tmp}/s.json"])
+            R.main(["load", "--target", tgt, "--out", f"{tmp}/l.json", "--fraction", "0.001", "--workers", "2"])
+            with psycopg.connect(DSN, autocommit=True) as c:      # leftovers: a receipt and a changed stock
+                c.execute("INSERT INTO operation_receipts (op_id, kind, ref_id, created_at) "
+                          "VALUES ('dead:0:0', 'cancel', 0, now())")
+                c.execute("UPDATE orders SET status = 'cancelled' WHERE id = 0")
+            cell = OL.Cell("it-after-dead", "LOCAL", "open", 50.0, 0, 1, 1, 3, 0.001)
+            R.main(["cell", "--target", tgt, "--out", f"{tmp}/c.json", "--cell-json", json.dumps(asdict(cell))])
+            out = json.load(open(f"{tmp}/c.json"))
+            self.assertEqual(out["status"], "ok", out.get("error"))
+            self.assertEqual(out["invariants"]["violations"], [])
+            self.assertGreaterEqual(out["pre_reset"]["receipts"], 1)

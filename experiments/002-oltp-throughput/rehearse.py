@@ -23,6 +23,7 @@ def run(dsn, fraction=0.001, warmup_s=2, measure_s=5, slo_factor=1.0):
     """slo_factor loosens every SLO bound and the schedule-lag limit for a laptop where the generator and the database share the CPU;
     the rehearsal checks the pipeline, not the numbers."""
     saved = (dict(slo.SLO), slo.MAX_TECH_FAILURE, slo.GEN_LAG_P99_MAX_MS)
+    slo.REQUIRE_GENERATOR_CPU = False          # no /proc/stat on macOS
     slo.SLO.update({k: (a * slo_factor, b * slo_factor) for k, (a, b) in saved[0].items()})
     slo.MAX_TECH_FAILURE = saved[1] * slo_factor
     slo.GEN_LAG_P99_MAX_MS = saved[2] * slo_factor
@@ -32,6 +33,7 @@ def run(dsn, fraction=0.001, warmup_s=2, measure_s=5, slo_factor=1.0):
         slo.SLO.clear()
         slo.SLO.update(saved[0])
         slo.MAX_TECH_FAILURE, slo.GEN_LAG_P99_MAX_MS = saved[1], saved[2]
+        slo.REQUIRE_GENERATOR_CPU = True
 
 
 def _run(dsn, fraction, warmup_s, measure_s):

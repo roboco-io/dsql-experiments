@@ -132,7 +132,7 @@ def pending_chunks(chunks, done: set) -> list:
     return [c for c in chunks if f"{c[0]}:{c[1]}:{c[2]}" not in done]
 
 
-def cmd_schema(target):
+def cmd_schema(target, out_dir):
     """Drop and create the schema. DSQL builds the index asynchronously; wait until pg_indexes shows it
     (the check E001 used for CREATE INDEX ASYNC)."""
     c = C.sync_connect_factory(target)()
@@ -144,8 +144,23 @@ def cmd_schema(target):
         if time.monotonic() - t0 > INDEX_WAIT_S:
             raise RuntimeError("index not visible after CREATE INDEX ASYNC")
         time.sleep(5)
+    index_wait = round(time.monotonic() - t0, 1)
+    try:                                   # fail here, before any data is paid for, if the service rejects them
+        INV.check(INV.collect(c), {"order_create": {"committed": 0, "ambiguous": 0},
+                                   "cancel": {"committed": 0, "ambiguous": 0}})
+        INV.reset(c)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"reset/invariant SQL rejected: {getattr(exc, 'sqlstate', None)} "
+                           f"{type(exc).__name__}") from None
     c.close()
-    return {"kind": kind, "tables": list(SC.TABLES), "index_wait_s": round(time.monotonic() - t0, 1)}
+    # fresh tables: chunk progress from an earlier load no longer describes them
+    for f in os.listdir(out_dir) if os.path.isdir(out_dir) else []:
+        if f.startswith("load-") and f.endswith(".progress"):
+            os.remove(os.path.join(out_dir, f))
+    return {"kind": kind, "tables": list(SC.TABLES), "index_wait_s": index_wait, "sql_check": "ok"}
+
+
+CONN_MAX_AGE_S = 50 * 60        # DSQL ends connections after an hour: reconnect before that
 
 
 def _retryable(exc) -> bool:
@@ -153,27 +168,47 @@ def _retryable(exc) -> bool:
     return code is None or code == "40001" or str(code).startswith("08")
 
 
+def needs_refresh(opened_at: float, now: float) -> bool:
+    return now - opened_at >= CONN_MAX_AGE_S
+
+
+def insert_with_retry(insert, reconnect, sleep=time.sleep, attempts=5) -> str:
+    """'inserted', or 'landed' when a retry after a lost COMMIT meets its own rows (23505)."""
+    retried = False
+    for attempt in range(attempts):
+        try:
+            insert()
+            return "inserted"
+        except Exception as exc:  # noqa: BLE001 - retry conflicts/connection loss, re-raise the rest
+            if retried and getattr(exc, "sqlstate", None) == "23505":
+                return "landed"
+            if attempt == attempts - 1 or not _retryable(exc):
+                raise
+            retried = True
+            sleep(0.5 * (attempt + 1))
+            reconnect()
+    raise RuntimeError("unreachable")
+
+
 def _load_worker(args):
     target, method, fraction, chunk_list = args
     sc = G.S_SCALE if fraction >= 1.0 else G.scaled(fraction)
     connect = C.sync_connect_factory(target)
-    c, done = connect(), []
+    state = {"c": connect(), "opened": time.monotonic()}
+
+    def reconnect():
+        try:
+            state["c"].close()
+        except Exception:  # noqa: BLE001
+            pass
+        state["c"], state["opened"] = connect(), time.monotonic()
+    done = []
     for table, a, b in chunk_list:
-        for attempt in range(5):
-            try:
-                G.insert_chunk(c, table, a, b, sc, method)
-                break
-            except Exception as exc:  # noqa: BLE001 - retry conflicts/connection loss, re-raise the rest
-                if attempt == 4 or not _retryable(exc):
-                    raise
-                try:
-                    c.close()
-                except Exception:  # noqa: BLE001
-                    pass
-                time.sleep(0.5 * (attempt + 1))
-                c = connect()
+        if needs_refresh(state["opened"], time.monotonic()):
+            reconnect()
+        insert_with_retry(lambda: G.insert_chunk(state["c"], table, a, b, sc, method), reconnect)
         done.append(f"{table}:{a}:{b}")
-    c.close()
+    state["c"].close()
     return done
 
 
@@ -217,6 +252,7 @@ def cmd_cell(target, cell_json, out):
     result = {"cell": asdict(cell), "status": "error", "started": _now()}
     try:
         admin = C.sync_connect_factory(target)()
+        result["pre_reset"] = INV.reset(admin)   # leftovers of a cell that died before its own reset
         result["rtt_ms"] = _rtt_ms(admin)
         processes = os.cpu_count() or 1
         t_start = time.time() + start_delay_s(cell, processes)
@@ -259,7 +295,7 @@ def main(argv=None):
     if a.command == "probe":
         res = cmd_probe(target)
     elif a.command == "schema":
-        res = cmd_schema(target)
+        res = cmd_schema(target, os.path.dirname(os.path.abspath(a.out)))
     elif a.command == "load":
         res = cmd_load(target, a.fraction, a.tables.split(","), a.workers, a.out + ".progress")
     else:

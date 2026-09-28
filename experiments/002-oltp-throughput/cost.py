@@ -49,15 +49,29 @@ def resource_usd(r: dict, now) -> float:
     and the worst-case rate only after that."""
     x = r["extra"]
     rate = x.get("rate_usd_per_h", 0.0)
+    before = x.get("previous_usd", 0.0)      # earlier lifetimes of a re-created id
     if "measured_usd" in x:
-        return x["measured_usd"] + rate * resource_hours(r, now, since=x["measured_until"])
-    return rate * resource_hours(r, now)
+        return before + x["measured_usd"] + rate * resource_hours(r, now, since=x["measured_until"])
+    return before + rate * resource_hours(r, now)
 
 
 def spent_usd(data: dict, now=None) -> float:
     now = now or utcnow()
     return (sum(resource_usd(r, now) for r in data["resources"])
-            + sum(data.get("measured_usd", {}).values()))
+            + sum(data.get("measured_usd", {}).values())
+            + sum(p["usd"] for p in data.get("pending_usd", {}).values()))
+
+
+def add_pending(data: dict, key: str, usd: float, until: str) -> None:
+    """Usage that happened up to `until` but that CloudWatch has not reported yet (e.g. a D1 cell's DPU)."""
+    data.setdefault("pending_usd", {})[key] = {"usd": usd, "until": until}
+
+
+def settle_pending(data: dict, covered_until: str) -> None:
+    """Drop pending entries once measured costs cover their period."""
+    done = [k for k, p in data.get("pending_usd", {}).items() if parse_iso(p["until"]) <= parse_iso(covered_until)]
+    for k in done:
+        data["pending_usd"].pop(k)
 
 
 def active_rate(data: dict) -> float:

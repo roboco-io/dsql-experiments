@@ -1,21 +1,46 @@
 """Connection factories for the E002 runner. Credentials are fetched in-process and never printed or stored."""
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 
 import psycopg
+
+
+TOKEN_TTL_S = 600               # reuse a signed DSQL token this long (it is valid for 15 minutes)
+_TOKEN_CACHE: dict = {}
+_CLIENTS: dict = {}
+
+
+def _sign(target: dict) -> str:
+    import boto3
+    client = _CLIENTS.get(target["region"])
+    if client is None:
+        client = _CLIENTS[target["region"]] = boto3.client("dsql", region_name=target["region"])
+    return client.generate_db_connect_admin_auth_token(Hostname=target["host"], Region=target["region"],
+                                                       ExpiresIn=900)
+
+
+def _dsql_token(target: dict, now: float | None = None) -> str:
+    """Signing needs a boto3 client and takes tens of milliseconds: cache per process for TOKEN_TTL_S."""
+    now = time.monotonic() if now is None else now
+    key = (target["host"], target["region"])
+    hit = _TOKEN_CACHE.get(key)
+    if hit and now - hit[1] < TOKEN_TTL_S:
+        return hit[0]
+    token = _sign(target)
+    _TOKEN_CACHE[key] = (token, now)
+    return token
 
 
 def _credentials(target: dict):
     kind = target["kind"]
     if kind == "dsn":
         return None, None
-    import boto3
     if kind == "dsql":
-        client = boto3.client("dsql", region_name=target["region"])
-        token = client.generate_db_connect_admin_auth_token(Hostname=target["host"], Region=target["region"],
-                                                           ExpiresIn=3600)
-        return target.get("user", "admin"), token
+        return target.get("user", "admin"), _dsql_token(target)
+    import boto3
     if kind == "pg":
         secret = boto3.client("secretsmanager", region_name=target["region"]).get_secret_value(
             SecretId=target["secret_arn"])
@@ -53,7 +78,9 @@ def async_connect_factory(target: dict):
     kw = _kwargs_fn(target)
 
     async def connect():
-        return await psycopg.AsyncConnection.connect(**kw())
+        # a DSQL token may need signing: keep that off the event loop so the open-loop producer is not delayed
+        args = await asyncio.to_thread(kw) if target.get("kind") == "dsql" else kw()
+        return await psycopg.AsyncConnection.connect(**args)
     return connect
 
 

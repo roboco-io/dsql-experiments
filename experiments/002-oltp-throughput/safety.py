@@ -144,7 +144,7 @@ class Manifest:
             "caller_arn": identity_arn, "created_at": iso(now),
             "expires_at": iso(now + timedelta(minutes=lifetime_min)),
             "resources": [], "config_status": {}, "connections": {}, "events": [],
-            "measured_usd": {},
+            "measured_usd": {}, "pending_usd": {},
         })
         m.save()
         return m
@@ -195,7 +195,9 @@ class Manifest:
                 r = {"config": scope, "type": rtype, "id": rid, "state": state or "requested",
                      "recorded_at": iso(utcnow()), "extra": {}}
                 self.data["resources"].append(r)
-            elif state and r["state"] != "deleted":
+            elif state and r["state"] == "deleted":
+                _restart(r, state)            # same id created again (e.g. A2 after the pilot)
+            elif state:
                 r["state"] = state
             r["extra"].update(extra)
             self.save()
@@ -210,6 +212,28 @@ class Manifest:
             r["extra"].update(extra)
             r[f"{state}_at"] = iso(utcnow())
             self.save()
+
+
+def _hours(start: str, end: str) -> float:
+    return max(0.0, (parse_iso(end) - parse_iso(start)).total_seconds() / 3600)
+
+
+def _restart(r: dict, state: str) -> None:
+    """Fold the finished lifetime's cost into previous_usd and start a new lifetime clock."""
+    x = r["extra"]
+    rate = x.get("rate_usd_per_h", 0.0)
+    end = r.get("deleted_at") or iso(utcnow())
+    if "measured_usd" in x:
+        done = x["measured_usd"] + rate * _hours(x["measured_until"], end)
+    else:
+        done = rate * _hours(r["recorded_at"], end)
+    x["previous_usd"] = x.get("previous_usd", 0.0) + done
+    for k in ("measured_usd", "measured_until"):
+        x.pop(k, None)
+    for k in [k for k in r if k.endswith("_at") and k != "recorded_at"]:
+        r.pop(k)
+    r["recorded_at"] = iso(utcnow())
+    r["state"] = state
 
 
 def active_configs(data: dict) -> set[str]:

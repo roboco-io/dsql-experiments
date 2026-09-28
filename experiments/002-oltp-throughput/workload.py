@@ -97,7 +97,8 @@ class ConnHolder:
             pass
 
     async def reopen(self):
-        await self.close()
+        if self.conn is not None:
+            await self.close()
         self.reconnects += 1
         self.conn = await self.connect()
 
@@ -105,7 +106,10 @@ class ConnHolder:
         try:
             await self.conn.execute("ROLLBACK")
         except Exception:  # noqa: BLE001 - connection unusable: replace it
-            await self.reopen()
+            try:
+                await self.reopen()
+            except Exception:  # noqa: BLE001 - DB refuses connections: the next attempt reports it
+                self.conn = None
 
 
 async def _commit(h):
@@ -191,6 +195,12 @@ async def run_op(h, op, policy, rng, t_sched: float, first_attempt: int = 1) -> 
         remaining = policy.deadline_s - (time.monotonic() - t_sched)
         if remaining <= 0:
             return Result("failed", attempt - 1, errors, reason="deadline")
+        if h.conn is None:                               # an earlier reconnect failed
+            try:
+                await h.reopen()
+            except Exception:  # noqa: BLE001 - overload shows up as a failed request, never a crashed cell
+                errors.append("conn")
+                return Result("failed", attempt, errors, reason="connection")
         try:
             out = await asyncio.wait_for(_txn(h, op), remaining)
         except asyncio.TimeoutError:
@@ -206,7 +216,8 @@ async def run_op(h, op, policy, rng, t_sched: float, first_attempt: int = 1) -> 
                     pass
             if state:
                 return Result("committed", attempt, errors, resolved=True)
-            return Result("failed", attempt, errors, ambiguous=was_commit and state is None, reason="deadline")
+            # no retry follows: a commit that was in flight stays ambiguous unless its receipt was seen
+            return Result("failed", attempt, errors, ambiguous=was_commit and not state, reason="deadline")
         except psycopg.Error as exc:
             st = exc.sqlstate
             was_commit, h.in_commit = h.in_commit, False

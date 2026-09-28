@@ -9,6 +9,7 @@ SLO = {"product_read": (50, 100), "order_history": (50, 100), "order_create": (1
 MAX_TECH_FAILURE = 0.001
 GEN_CPU_MAX = 85.0
 GEN_LAG_P99_MAX_MS = 10.0
+REQUIRE_GENERATOR_CPU = True    # the CPU sampler needs Linux /proc/stat; local rehearsals turn this off
 STEP = 1.25
 
 
@@ -17,7 +18,9 @@ def judge(r: dict) -> dict:
         return {"verdict": "invalid", "reasons": [f"status {r.get('status')}"]}
     reasons = []
     g = r.get("generator") or {}
-    if (g.get("cpu_pct") or 0) > GEN_CPU_MAX:
+    if g.get("cpu_pct") is None and REQUIRE_GENERATOR_CPU:
+        reasons.append("generator cpu unknown")
+    elif (g.get("cpu_pct") or 0) > GEN_CPU_MAX:
         reasons.append(f"generator cpu {g['cpu_pct']:.0f}%")
     if (g.get("lag_p99_ms") or 0) > GEN_LAG_P99_MAX_MS:
         reasons.append(f"schedule lag p99 {g['lag_p99_ms']:.1f} ms")

@@ -5,6 +5,7 @@ import random
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
@@ -505,3 +506,294 @@ class Conn(unittest.TestCase):
             connect()
             connect()
             self.assertEqual(cred.call_count, 1)
+
+
+class ReviewFixes(unittest.TestCase):
+    def test_recreated_resource_restarts_its_clock(self):
+        # C2: pilot deletes A2, the main run re-creates the same ids; cost must count from the re-creation
+        with tempfile.TemporaryDirectory() as tmp:
+            m = _manifest(tmp)
+            m.add_resource("A2", "db_instance", "w1", state="created", rate_usd_per_h=10.0)
+            r = m.find("A2", "db_instance", "w1")
+            r["recorded_at"] = S.iso(S.utcnow() - timedelta(hours=3))
+            r["extra"].update(measured_usd=1.0, measured_until=S.iso(S.utcnow() - timedelta(hours=2)))
+            m.set_state("A2", "db_instance", "w1", "deleted")
+            r["deleted_at"] = S.iso(S.utcnow() - timedelta(hours=2))
+            m.add_resource("A2", "db_instance", "w1", state="requested", rate_usd_per_h=10.0)
+            m.set_state("A2", "db_instance", "w1", "created")
+            r = m.find("A2", "db_instance", "w1")
+            later = S.utcnow() + timedelta(hours=1)
+            self.assertNotIn("deleted_at", r)
+            self.assertNotIn("measured_usd", r["extra"])
+            self.assertAlmostEqual(cost.resource_usd(r, later), 1.0 + 10.0, delta=0.1)   # earlier life + 1 h
+
+    def test_recreated_resource_keeps_the_earlier_lifetime_cost(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m = _manifest(tmp)
+            m.add_resource("A2", "db_instance", "w1", state="created", rate_usd_per_h=10.0)
+            r = m.find("A2", "db_instance", "w1")
+            r["recorded_at"] = S.iso(S.utcnow() - timedelta(hours=3))
+            m.set_state("A2", "db_instance", "w1", "deleted")
+            r["deleted_at"] = S.iso(S.utcnow() - timedelta(hours=2))      # lived 1 h: USD 10
+            m.add_resource("A2", "db_instance", "w1", state="requested", rate_usd_per_h=10.0)
+            self.assertAlmostEqual(cost.spent_usd(m.data), 10.0, delta=0.1)
+
+    def test_runner_alive_raises_runner_lost_for_a_deleted_or_vanished_runner(self):
+        # I8: EC2 forgets terminated instances after about an hour (InvalidInstanceID.NotFound)
+        with tempfile.TemporaryDirectory() as tmp:
+            m = _manifest(tmp)
+            m.add_resource("D1", "ec2_instance", "i-1", state="created")
+            m.data["runners"] = {"D1": "i-1"}
+
+            class NotFound(Exception):
+                response = {"Error": {"Code": "InvalidInstanceID.NotFound"}}
+
+            class EC2:
+                def describe_instances(self, **kw):
+                    raise NotFound()
+
+            class Sess:
+                def client(self, name):
+                    return EC2()
+            with self.assertRaises(E.RunnerLost):
+                E.runner_alive(Sess(), m, "D1")
+            m.set_state("D1", "ec2_instance", "i-1", "deleted")
+            with self.assertRaises(E.RunnerLost):
+                E.runner_alive(Sess(), m, "D1")
+
+    def test_load_config_resumes_without_dropping_the_schema(self):
+        # C1: a rerun after a failed load must not DROP tables while the runner still has chunk progress
+        with tempfile.TemporaryDirectory() as tmp:
+            m = _manifest(tmp)
+            calls = []
+
+            def fake_runner_json(sess, m_, cfg, command, extra, timeout_s, what):
+                calls.append(command)
+                if command == "load" and calls.count("load") == 1:
+                    raise RuntimeError("SSM failed mid-load")
+                return {"rows": {}, "seconds": 1, "method": "copy", "fraction": 1.0, "index_wait_s": 0}
+            with mock.patch.object(E, "runner_json", fake_runner_json):
+                with self.assertRaises(RuntimeError):
+                    E.load_config(None, m, "R1", 1.0)
+                E.load_config(None, m, "R1", 1.0)
+            self.assertEqual(calls, ["schema", "load", "load"])
+
+
+import psycopg  # noqa: E402
+
+
+class _PgErr(psycopg.Error):
+    def __init__(self, sqlstate):
+        self._st = sqlstate
+        super().__init__(sqlstate)
+
+    @property
+    def sqlstate(self):
+        return self._st
+
+
+class _Err(Exception):
+    def __init__(self, sqlstate):
+        super().__init__(sqlstate)
+        self.sqlstate = sqlstate
+
+
+class ReviewFixesLoadAndOps(unittest.TestCase):
+    def test_chunk_that_landed_before_a_dropped_commit_counts_as_done(self):
+        # I1: connection drops during COMMIT, the retry hits 23505 -> the chunk is already in
+        seq = [_Err(None), _Err("23505")]
+
+        def insert():
+            if seq:
+                raise seq.pop(0)
+        self.assertEqual(R.insert_with_retry(insert, reconnect=lambda: None, sleep=lambda s: None), "landed")
+
+    def test_first_attempt_unique_violation_is_an_error(self):
+        def insert():
+            raise _Err("23505")
+        with self.assertRaises(_Err):
+            R.insert_with_retry(insert, reconnect=lambda: None, sleep=lambda s: None)
+
+    def test_worker_reconnects_before_the_dsql_hour(self):
+        self.assertTrue(R.needs_refresh(opened_at=0.0, now=R.CONN_MAX_AGE_S + 1))
+        self.assertFalse(R.needs_refresh(opened_at=0.0, now=10.0))
+
+    def _run(self, txn, receipt, connect=None):
+        import asyncio
+
+        class H(W.ConnHolder):
+            pass
+        h = H(connect or (lambda: None))
+        h.conn = object()
+        op = W.Op("order_create", "c:0:1", 1, SC.RUN_ID_BASE + 1, ((0, 1, 1),))
+        with mock.patch.object(W, "_txn", txn), mock.patch.object(W, "_receipt_exists", receipt):
+            return asyncio.run(W.run_op(h, op, W.retry.RetryPolicy(3, deadline_s=0.2), random.Random(0),
+                                        time.monotonic()))
+
+    def test_deadline_during_commit_without_receipt_is_ambiguous(self):
+        # I3: the commit may still land after the lookup; no retry follows, so keep it ambiguous
+        import asyncio
+
+        async def txn(h, op):
+            h.in_commit = True
+            await asyncio.sleep(1)
+
+        async def receipt(h, op):
+            return False
+        res = self._run(txn, receipt)
+        self.assertEqual(res.outcome, "failed")
+        self.assertTrue(res.ambiguous)
+
+    def test_failed_reconnect_is_a_failed_attempt_not_an_exception(self):
+        # I4: a database refusing connections must show up as failed/connection, not crash the cell
+        async def txn(h, op):
+            raise _PgErr("40001")
+
+        async def receipt(h, op):
+            return False
+
+        async def refuse():
+            raise OSError("connection refused")
+        with mock.patch.object(W.ConnHolder, "rollback_quiet", W.ConnHolder.rollback_quiet):
+            res = self._run(txn, receipt, connect=refuse)
+        self.assertEqual(res.outcome, "failed")
+
+    def test_dsql_token_is_reused_within_its_ttl(self):
+        # I5: signing per connection blocks the event loop; cache the token for a few minutes
+        C._TOKEN_CACHE.clear()
+        target = {"kind": "dsql", "host": "h", "region": "r"}
+        signer = mock.Mock(return_value="tok")
+        with mock.patch.object(C, "_sign", signer):
+            C._dsql_token(target, now=0.0)
+            C._dsql_token(target, now=60.0)
+            C._dsql_token(target, now=C.TOKEN_TTL_S + 1)
+        self.assertEqual(signer.call_count, 2)
+
+
+class ReviewFixesCostAndMeasurement(unittest.TestCase):
+    def test_pending_tail_counts_until_cloudwatch_covers_it(self):
+        # I6: DPU of a D1 cell's last minutes is not in CloudWatch yet when the reservation ends
+        data = {"resources": [], "measured_usd": {}, "pending_usd": {}}
+        cost.add_pending(data, "D1:cell1", 0.5, until="2026-09-28T10:10:00Z")
+        self.assertAlmostEqual(cost.spent_usd(data), 0.5)
+        cost.settle_pending(data, covered_until="2026-09-28T10:05:00Z")
+        self.assertAlmostEqual(cost.spent_usd(data), 0.5)
+        cost.settle_pending(data, covered_until="2026-09-28T10:11:00Z")
+        self.assertAlmostEqual(cost.spent_usd(data), 0.0)
+
+    def test_pilot_cells_book_dpu_with_the_e004_prior(self):
+        data = {"resources": []}
+        cell = OL.Cell("D1-p-1600", "D1", "open", 1600.0, 0, 0, 60, 120)
+        self.assertGreater(E.cell_estimate_usd(data, cell, None, 0.0), 0.0)
+
+    def test_loads_of_controls_are_booked(self):
+        data = {"resources": [{"config": "R1", "state": "created", "extra": {"rate_usd_per_h": 1.5}}]}
+        self.assertAlmostEqual(E.load_booking_usd(data, "R1"), 1.5 * E.LOAD_HOURS_EST)
+
+    def test_aligned_window_stays_inside_the_measure_window(self):
+        start, end = E.aligned_window("2026-09-28T10:00:20Z", "2026-09-28T10:02:20Z")
+        self.assertEqual((S.iso(start), S.iso(end)), ("2026-09-28T10:01:00Z", "2026-09-28T10:02:00Z"))
+
+    def test_dpu_per_attempt_uses_attempts_of_the_same_window(self):
+        # 60 s aligned window out of a 120 s measure window: half of the measured attempts
+        self.assertAlmostEqual(E.dpu_per_attempt(dpu=600.0, attempt_tps=100.0, window_s=60.0), 0.1)
+
+    def test_unknown_generator_cpu_is_invalid(self):
+        self.assertEqual(slo.judge(_res(cpu=None))["verdict"], "invalid")
+
+    def test_cloudwatch_queries_per_config(self):
+        conns = {"R1": {"instance_id": "r1"}, "A2": {"cluster_id": "c", "writer": "w", "reader": "r"},
+                 "D1": {"cluster_id": "d"}}
+        names = {q["metric"] for q in E.cloudwatch_queries("A2", conns["A2"])}
+        self.assertTrue({"CPUUtilization", "DatabaseConnections", "ServerlessDatabaseCapacity"} <= names)
+        self.assertIn("ReadIOPS", {q["metric"] for q in E.cloudwatch_queries("R1", conns["R1"])})
+        self.assertEqual({q["namespace"] for q in E.cloudwatch_queries("D1", conns["D1"])}, {"AWS/AuroraDSQL"})
+
+    def test_saturation_cause_prefers_generator_then_db_cpu(self):
+        r = _res(cpu=95.0)
+        self.assertEqual(E.saturation_cause(r), "generator")
+        r = _res()
+        r["cloudwatch"] = {"CPUUtilization": {"max": 97.0}}
+        self.assertEqual(E.saturation_cause(r), "db_cpu")
+        r = _res()
+        r["metrics"]["per_kind"]["product_read"]["queue_p99_ms"] = 800.0
+        self.assertEqual(E.saturation_cause(r), "connection_pool")
+
+    def test_lag_is_recorded_only_inside_the_measure_window(self):
+        import asyncio
+
+        class FakeHolder:
+            def __init__(self, connect):
+                pass
+
+            async def open(self):
+                pass
+
+            async def close(self):
+                pass
+
+        async def fake_run_op(h, op, policy, rng, t):
+            return W.Result("committed", 1)
+        cell = OL.Cell("lag", "LOCAL", "open", 200.0, 0, 1, 1, 1, 0.001)
+        st = OL.Stats()
+        with mock.patch.object(OL.W, "ConnHolder", FakeHolder), mock.patch.object(OL.W, "run_op", fake_run_op), \
+                mock.patch.object(OL, "STAGGER_S", 0.0):
+            asyncio.run(OL._open_proc(cell, 0, 200.0, 2, None, time.monotonic(), G.scaled(0.001), st))
+        sched = OL.poisson_schedule(200.0, 2, random.Random("sched:lag:0"))
+        self.assertEqual(st.lag.count, sum(1 for t in sched if t >= 1))
+
+    def test_batch_down_cleans_every_config_and_refreshes_first(self):
+        calls = []
+        m = mock.Mock()
+        m.data = {"resources": [], "config_status": {}}
+        m.prefix = PFX
+        with mock.patch.object(E, "session", return_value=(None, {})), \
+                mock.patch.object(E, "load_manifest", return_value=m), \
+                mock.patch.object(E.IN, "cleanup", side_effect=lambda sess, m_, cfg: calls.append(cfg)), \
+                mock.patch.object(E.IN, "verify", return_value={"verified_at": "x", "remaining_count": 0,
+                                                                "tag_index_arns_for_review": []}), \
+                mock.patch.object(E.S, "write_private"):
+            E.main(["batch-down", "--account-id", ACCT, "--prefix", PFX])
+        self.assertEqual(sorted(calls), sorted(S.CONFIGS))
+
+    def test_phases_refresh_measured_costs_before_booking(self):
+        order = []
+        m = mock.Mock()
+        m.data = {"resources": []}
+        m.prefix = PFX
+        with mock.patch.object(E, "refresh_measured", side_effect=lambda *a: order.append("refresh")), \
+                mock.patch.object(E, "_require_ready"), mock.patch.object(E, "_pilot", return_value=None), \
+                mock.patch.object(E, "run_cell_on", side_effect=lambda *a, **k: order.append("cell") or _res()), \
+                mock.patch.object(E.S, "write_private"):
+            E.do_explore(None, m, mock.Mock(budget_cap=45.0, explore_warmup_s=1, explore_measure_s=1))
+        self.assertEqual(order[0], "refresh")
+
+
+class CloudWatchPerCell(unittest.TestCase):
+    def test_fetch_summarizes_avg_and_max_and_expands_dsql_metrics(self):
+        class CW:
+            def list_metrics(self, Namespace):
+                return {"Metrics": [{"MetricName": "TotalDPU", "Dimensions": [{"Name": "ClusterId", "Value": "d"}]},
+                                    {"MetricName": "TotalDPU", "Dimensions": [{"Name": "ClusterId", "Value": "x"}]}]}
+
+            def get_metric_statistics(self, **kw):
+                return {"Datapoints": [{"Average": 10.0, "Maximum": 20.0, "Sum": 30.0},
+                                       {"Average": 30.0, "Maximum": 50.0, "Sum": 60.0}]}
+        now = S.utcnow()
+        out = E.fetch_cloudwatch(CW(), [{"namespace": "AWS/RDS", "metric": "CPUUtilization",
+                                          "dims": {"DBInstanceIdentifier": "w"}}], now, now)
+        self.assertEqual(out["CPUUtilization"], {"avg": 20.0, "max": 50.0, "sum": 90.0, "points": 2})
+        out = E.fetch_cloudwatch(CW(), [{"namespace": "AWS/AuroraDSQL", "metric": "*", "dims": "d"}], now, now)
+        self.assertEqual(list(out), ["TotalDPU"])
+
+    def test_summarize_row_carries_saturation_cause_for_failed_cells(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(E, "ART", tmp):
+            d = os.path.join(tmp, PFX, "results", "R1")
+            os.makedirs(d)
+            r = _res(p99=500.0)
+            r["cell"].update(cell_id="R1-m-100.0-r01", mode="open", rate=100.0, rep=1)
+            r["cloudwatch"] = {"CPUUtilization": {"max": 99.0}}
+            json.dump(r, open(os.path.join(d, "R1-m-100.0-r01.json"), "w"))
+            E.summarize(PFX)
+            row = json.load(open(os.path.join(tmp, PFX, "summary.json")))["cells"][0]
+        self.assertEqual((row["verdict"], row["saturation"]), ("fail", "db_cpu"))

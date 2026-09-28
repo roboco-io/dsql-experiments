@@ -167,7 +167,8 @@ async def _open_proc(cell, proc, rate, conns, connect, t0_mono, sc, stats):
         for seq, off in enumerate(sched):
             t = t0_mono + off
             await _sleep_until_mono(t)
-            stats.record_lag((time.monotonic() - t) * 1000)
+            if off >= cell.warmup_s:                  # startup jitter must not invalidate the cell
+                stats.record_lag((time.monotonic() - t) * 1000)
             q.put_nowait((seq, t, off >= cell.warmup_s))
         for _ in holders:
             q.put_nowait(None)

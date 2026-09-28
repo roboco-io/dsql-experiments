@@ -44,7 +44,7 @@ layout: default
     {% for experiment in experiments %}
     <article class="experiment-row">
       <span class="experiment-id">{{ experiment.experiment_id }}</span>
-      <div class="experiment-description"><h3><a href="{{ experiment.url | relative_url }}">{{ experiment.title | escape }}</a></h3><p>{{ experiment.question | escape }}</p>{% if experiment.status == 'completed' and experiment.result %}<p class="experiment-result"><strong>결과</strong> {{ experiment.result | escape }}</p>{% endif %}</div>
+      <div class="experiment-description"><h3><a href="{{ experiment.url | relative_url }}">{{ experiment.title | escape }}</a></h3><p>{{ experiment.question | escape }}</p>{% if experiment.status == 'completed' and experiment.result %}<p class="experiment-result"><strong>결과</strong> {{ experiment.result | escape }}</p>{% endif %}{% if experiment.status == 'completed' %}{% assign parts = experiment.content | split: '<h2' %}{% assign head = parts[1] | split: '</h2>' | first %}{% if head contains '결과 요약' %}{% assign sec = parts[1] | remove_first: head | remove_first: '</h2>' %}<details class="experiment-summary"><summary>요약과 프로덕션 사용 관점 보기</summary><div class="prose">{{ sec }}</div><a href="{{ experiment.url | relative_url }}">보고서 전체 보기</a></details>{% endif %}{% endif %}</div>
       <div class="experiment-state"><span class="status status-{{ experiment.status }}">{{ site.data.statuses[experiment.status] }}</span><small>{{ experiment.priority }}</small><a href="{{ experiment.issue_url }}">이슈 #{{ experiment.issue }}</a></div>
     </article>
     {% endfor %}

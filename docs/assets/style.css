@@ -69,6 +69,12 @@ h1, h2, h3 { line-height: 1.35; word-break: keep-all; overflow-wrap: anywhere; }
 .experiment-description p { font-size: 15px; color: var(--muted); margin: 0; max-width: 670px; word-break: keep-all; overflow-wrap: anywhere; }
 .experiment-description p.experiment-result { margin-top: 8px; color: var(--ink); }
 .experiment-result strong { color: var(--accent); margin-right: 6px; }
+.experiment-summary { margin-top: 10px; max-width: 670px; }
+.experiment-summary > summary { cursor: pointer; font-size: 14px; color: var(--accent); }
+.experiment-summary .prose { font-size: 15px; color: var(--ink); margin-top: 8px; }
+.experiment-summary .prose p { color: var(--ink); line-height: 1.8; margin: 0 0 12px; }
+.experiment-summary .prose h3 { font-size: 16px; margin: 16px 0 8px; }
+.experiment-summary > a { font-size: 14px; }
 .experiment-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 9px; font-size: 13px; }
 .experiment-state > a { flex-basis: 100%; }
 .experiment-state > small { color: var(--muted); }

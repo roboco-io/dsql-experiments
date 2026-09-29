@@ -411,5 +411,51 @@ def e009_idle(target, cycles=2, idle_s=900, **_) -> dict:
     return {"cycles": out}
 
 
+# ---------------------------------------------------------------- E007: markers, a mistake, and a restored copy
+MARK = "mvp_marker"
+
+
+def e007_mark(target, n=30, **_) -> dict:
+    """One marker per second; returns the last good marker's commit time (server clock)."""
+    c = C.sync_connect_factory(target)()
+    c.execute(f"DROP TABLE IF EXISTS {MARK}")
+    c.execute(f"CREATE TABLE {MARK} (id int PRIMARY KEY, v int NOT NULL, at timestamptz NOT NULL)")
+    for i in range(n):
+        c.execute(f"INSERT INTO {MARK} (id, v, at) VALUES (%s, %s, now())", (i, i))
+        time.sleep(1)
+    good = c.execute(f"SELECT max(at), count(*), sum(v) FROM {MARK}").fetchone()
+    c.close()
+    return {"markers": good[1], "sum_v": good[2], "last_good_at": good[0].isoformat()}
+
+
+def e007_mistake(target, **_) -> dict:
+    """The 'operator mistake': every marker overwritten, then one marker that must not survive a restore."""
+    c = C.sync_connect_factory(target)()
+    at = c.execute("SELECT now()").fetchone()[0]
+    c.execute(f"UPDATE {MARK} SET v = -1")
+    c.execute(f"INSERT INTO {MARK} (id, v, at) VALUES (100000, 100000, now())")
+    c.close()
+    return {"mistake_at": at.isoformat()}
+
+
+def e007_verify(target, host=None, secret_arn=None, **_) -> dict:
+    """Connect to the restored copy and check the markers: all good, none overwritten, no post-mistake row."""
+    t = dict(target)
+    if host:
+        t["host"] = host
+    if secret_arn:
+        t["secret_arn"] = secret_arn
+    t0 = time.monotonic()
+    c = C.sync_connect_factory(t)()
+    connect_ms = round((time.monotonic() - t0) * 1000, 1)
+    row = c.execute(f"SELECT count(*), count(*) FILTER (WHERE v = -1), count(*) FILTER (WHERE id >= 100000), "
+                    f"sum(v) FILTER (WHERE v >= 0) FROM {MARK}").fetchone()
+    orders = c.execute("SELECT count(*) FROM orders").fetchone()[0]
+    c.close()
+    return {"connect_ms": connect_ms, "markers": row[0], "overwritten": row[1], "after_mistake": row[2],
+            "sum_v": row[3], "orders": orders}
+
+
 PROBES = {"e003": e003, "e005": e005, "e006": e006, "e008": e008, "e009-spike": e009_spike,
-          "e009-idle": e009_idle, "e012": e012}
+          "e009-idle": e009_idle, "e012": e012, "e007-mark": e007_mark, "e007-mistake": e007_mistake,
+          "e007-verify": e007_verify}

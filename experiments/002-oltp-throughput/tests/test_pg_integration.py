@@ -324,3 +324,10 @@ class MvpProbeIntegration(unittest.TestCase):
         self.assertEqual([p["cell"]["status"] for p in out["phases"]], ["ok", "ok"])
         idle = self._probe("e009-idle", cycles=1, idle_s=0)
         self.assertIn("first_read_ms", idle["cycles"][0])
+
+    def test_e007_markers_mistake_and_verify(self):
+        good = self._probe("e007-mark", n=3)
+        self.assertEqual(good["markers"], 3)
+        self._probe("e007-mistake")
+        seen = self._probe("e007-verify")          # no restore locally: the source shows the mistake
+        self.assertEqual((seen["markers"], seen["overwritten"], seen["after_mistake"]), (4, 3, 1))

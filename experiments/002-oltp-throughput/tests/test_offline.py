@@ -823,6 +823,12 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
             self.assertEqual(C._dsql_token({"host": "h2", "region": "r"}), "tok")
         C._TOKEN_CACHE.clear()
 
+    def test_the_runner_role_is_found_next_to_the_e007_backup_role(self):
+        m = mock.Mock(data={"resources": [
+            {"type": "iam_role", "id": "run-role", "state": "created", "extra": {}},
+            {"type": "iam_role", "id": "run-backup", "state": "created", "extra": {"purpose": "e007-backup"}}]})
+        self.assertEqual(IN._one(m, "iam_role"), "run-role")
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

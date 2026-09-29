@@ -137,7 +137,7 @@ def a2_pitr(sess, m, restore_to: datetime):
         DBSubnetGroupName=src["DBSubnetGroup"], VpcSecurityGroupIds=[g["VpcSecurityGroupId"] for g in
                                                                      src["VpcSecurityGroups"]],
         ServerlessV2ScalingConfiguration={"MinCapacity": float(IN.A2_ACU[0]), "MaxCapacity": float(IN.A2_ACU[1])},
-        ManageMasterUserPassword=True, DeletionProtection=False, Tags=tags)
+        DeletionProtection=False, Tags=tags)   # PITR keeps the source's master password
     m.set_state("A2", "db_cluster", cid, "created")
     m.add_resource("A2", "db_instance", iid, state="requested", cluster_member=True, restored=True,
                    rate_usd_per_h=IN.db_rate("A2"))
@@ -149,11 +149,8 @@ def a2_pitr(sess, m, restore_to: datetime):
     m.set_state("A2", "db_instance", iid, "created")
     IN.wait_available_instance(rds, iid)
     c = rds.describe_db_clusters(DBClusterIdentifier=cid)["DBClusters"][0]
-    secret = c["MasterUserSecret"]["SecretArn"]
-    m.add_resource("A2", "rds_secret", secret, state="created", restored=True)
-    IN.update_runner_policy(sess, m)
     return {"wait_restorable_s": waited, "cluster_available_s": cluster_s,
-            "restore_s": round(time.monotonic() - t0, 1), "host": c["Endpoint"], "secret_arn": secret}
+            "restore_s": round(time.monotonic() - t0, 1), "host": c["Endpoint"]}
 
 
 def run(sess, m, cap):
@@ -182,8 +179,8 @@ def run(sess, m, cap):
                 v = MR.probe(sess, m, "D1", "e007-verify", 0.02, 900, host=r["host"])
             else:
                 r = a2_pitr(sess, m, restore_to)
-                v = MR.probe(sess, m, "A2", "e007-verify", 0.02, 900, host=r["host"], secret_arn=r["secret_arn"])
-            return {**{k: val for k, val in r.items() if k not in ("host", "secret_arn")}, "verify": v}
+                v = MR.probe(sess, m, "A2", "e007-verify", 0.02, 900, host=r["host"])
+            return {**{k: val for k, val in r.items() if k != "host"}, "verify": v}
         res = E.parallel(["D1", "A2"], restore)
         E._print_outcomes("e007-restore", res)
         out["restore"] = {cfg: o.get("value") or {"error": o.get("error")} for cfg, o in res.items()}
@@ -198,16 +195,50 @@ def run(sess, m, cap):
     return 0
 
 
+def resume(sess, m):
+    """After the 09:35 run: D1 was already restored (verify it), A2 still needs its PITR copy."""
+    path = os.path.join(E.run_dir(m.prefix), "mvp", "e007.json")
+    out = json.load(open(path))
+    restore_to = datetime.fromisoformat(out["restore_to"])
+    MR.push_code(sess, m, ["D1", "A2"])
+
+    def one(cfg):
+        if cfg == "D1":
+            cid = next(r["id"] for r in m.data["resources"] if r["config"] == "D1" and r["extra"].get("restored")
+                       and r["state"] != "deleted")
+            jobs = [j for j in sess.client("backup").list_restore_jobs()["RestoreJobs"]
+                    if j.get("CreatedResourceArn", "").endswith(cid)]
+            j = jobs[0]
+            IN.update_runner_policy(sess, m)
+            host = sess.client("dsql").get_cluster(identifier=cid).get("endpoint") or \
+                f"{cid}.dsql.{m.data['region']}.on.aws"
+            v = MR.probe(sess, m, "D1", "e007-verify", 0.02, 900, host=host)
+            return {"restore_s": round((j["CompletionDate"] - j["CreationDate"]).total_seconds(), 1),
+                    "restore_job_status": j["Status"], "verify": v}
+        r = a2_pitr(sess, m, restore_to)
+        v = MR.probe(sess, m, "A2", "e007-verify", 0.02, 900, host=r["host"])
+        return {**{k: val for k, val in r.items() if k != "host"}, "verify": v}
+    res = E.parallel(["D1", "A2"], one)
+    E._print_outcomes("e007-resume", res)
+    out["restore"] = {cfg: o.get("value") or {"error": o.get("error")} for cfg, o in res.items()}
+    out["resumed"] = S.iso(S.utcnow())
+    S.write_private(path, out)
+    log("e007 resumed and saved")
+    return 0
+
+
 def main(argv=None):
     p = argparse.ArgumentParser()
     p.add_argument("--account-id", required=True)
     p.add_argument("--profile", default=S.PROFILE)
     p.add_argument("--prefix", required=True)
     p.add_argument("--cap", type=float, required=True)
+    p.add_argument("--resume", action="store_true")
     a = p.parse_args(argv)
     args = MR._args(a.prefix, a.account_id, a.profile)
     sess, _ = E.session(args)
-    return run(sess, E.load_manifest(args), a.cap)
+    m = E.load_manifest(args)
+    return resume(sess, m) if a.resume else run(sess, m, a.cap)
 
 
 if __name__ == "__main__":

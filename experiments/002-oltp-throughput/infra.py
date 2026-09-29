@@ -207,7 +207,8 @@ def ec2_on_demand_rate(sess, itype=RUNNER_TYPE) -> float:
 # ---------------------------------------------------------- provisioning --
 
 def _one(m, rtype):
-    ids = [r["id"] for r in m.data["resources"] if r["type"] == rtype and r["state"] != "deleted"]
+    ids = [r["id"] for r in m.data["resources"] if r["type"] == rtype and r["state"] != "deleted"
+           and not r["extra"].get("purpose")]           # e.g. the E007 backup role is not the runner role
     if len(ids) != 1:
         raise S.SafetyError(f"expected exactly one live {rtype}, found {len(ids)}")
     return ids[0]

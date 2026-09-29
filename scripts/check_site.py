@@ -41,7 +41,7 @@ for path in files:
     if "{{" in content or "{%" in content:
         errors.append(f"{path}: unresolved Liquid template")
 
-base = "/rds-experiments"
+base = "/dsql-experiments"
 for path, page in pages.items():
     for link in page.links:
         url = urlsplit(link)

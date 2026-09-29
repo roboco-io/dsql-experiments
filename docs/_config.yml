@@ -1,8 +1,8 @@
 title: DSQL 실험 노트
 description: Aurora DSQL의 성능과 개발·운영 편의성을 기존 RDS·Aurora와 비교하는 공개 실험 기록
 url: https://roboco.io
-baseurl: /rds-experiments
-repository_url: https://github.com/roboco-io/rds-experiments
+baseurl: /dsql-experiments
+repository_url: https://github.com/roboco-io/dsql-experiments
 lang: ko
 timezone: Asia/Seoul
 markdown: kramdown

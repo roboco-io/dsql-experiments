@@ -2,11 +2,11 @@
 
 **Aurora DSQL이 기존 인스턴스 기반·서버리스 서비스 대비 제공하는 성능과 개발·운영 편의성**을 실험하는 저장소입니다. 호환성·정합성 제약과 비용을 함께 비교해 DSQL이 유리하거나 불리한 조건을 파악합니다.
 
-최초 비교부터 **DSQL, RDS PostgreSQL Multi-AZ 인스턴스, Aurora PostgreSQL Provisioned, Aurora PostgreSQL Serverless v2**를 포함합니다. DSQL의 지연·처리량뿐 아니라 초기 연결, 이관, 용량 대응, 진단·복구·삭제에 드는 작업 시간과 수정량을 비교합니다. [실험 계획](EXPERIMENT_PLAN.md)에 대상 구성, 업무 부하, 측정 기준과 실행 순서를 정리했습니다. 12개 실험을 모두 마쳤습니다(9개는 최소 범위 MVP). 결론은 [DSQL 도입 판단 종합 보고서](https://roboco.io/rds-experiments/decision/)에, 사람과 코딩 에이전트가 따를 규칙과 코드 예시는 [Aurora DSQL 사용 가이드](https://roboco.io/rds-experiments/guide/)(원문 [docs/guide.md](docs/guide.md))에 있습니다.
+최초 비교부터 **DSQL, RDS PostgreSQL Multi-AZ 인스턴스, Aurora PostgreSQL Provisioned, Aurora PostgreSQL Serverless v2**를 포함합니다. DSQL의 지연·처리량뿐 아니라 초기 연결, 이관, 용량 대응, 진단·복구·삭제에 드는 작업 시간과 수정량을 비교합니다. [실험 계획](EXPERIMENT_PLAN.md)에 대상 구성, 업무 부하, 측정 기준과 실행 순서를 정리했습니다. 12개 실험을 모두 마쳤습니다(9개는 최소 범위 MVP). 결론은 [DSQL 도입 판단 종합 보고서](https://roboco.io/dsql-experiments/decision/)에, 사람과 코딩 에이전트가 따를 규칙과 코드 예시는 [Aurora DSQL 사용 가이드](https://roboco.io/dsql-experiments/guide/)(원문 [docs/guide.md](docs/guide.md))에 있습니다.
 
 업무 우선순위는 **일반 OLTP → 트래픽 급증·유휴 → 대용량 조회·집계**입니다. 편의성과 비용은 첫 생성부터 삭제까지 기록하며, 세부 인스턴스·스토리지 튜닝은 DSQL 채택 판단에 필요할 때 확대합니다. 공식 문서와 대상 선정 근거는 [서비스 선정 기록](SERVICE_SELECTION.md)에 정리했습니다.
 
-**[공개 실험 노트](https://roboco.io/rds-experiments/)**에서 계획과 검토한 결과를 확인할 수 있습니다. [GitHub 이슈](https://github.com/roboco-io/rds-experiments/issues?q=is%3Aissue+label%3Aexperiment)에서 각 실험의 진행 상황을 관리합니다. 결과 작성·검증·자동 배포 방법은 [공개 절차](PUBLISHING.md)에 정리했습니다.
+**[공개 실험 노트](https://roboco.io/dsql-experiments/)**에서 계획과 검토한 결과를 확인할 수 있습니다. [GitHub 이슈](https://github.com/roboco-io/dsql-experiments/issues?q=is%3Aissue+label%3Aexperiment)에서 각 실험의 진행 상황을 관리합니다. 결과 작성·검증·자동 배포 방법은 [공개 절차](PUBLISHING.md)에 정리했습니다.
 
 ## 확인할 질문
 
@@ -20,7 +20,7 @@
 ## 구조
 
 ```text
-rds-experiments/
+dsql-experiments/
 ├── README.md
 ├── INTENT.md                 # 실험 목적과 학습 기록
 ├── EXPERIMENT_PLAN.md        # 비교 대상, 공통 방법, 개별 실험 계획

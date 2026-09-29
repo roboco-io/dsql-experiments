@@ -1,6 +1,6 @@
 # 002 — OLTP 처리량과 지연의 한계
 
-> 상태: completed (2026-09-28 네 구성 1차 측정, 2026-09-29 DSQL 단독 2차 측정, 두 실행 모두 잔여 리소스 0 확인). 공통 도착률 본 측정·경계 탐색·반복은 하지 않았다. 결과는 [공개 보고서](https://roboco.io/rds-experiments/experiments/e002/).
+> 상태: completed (2026-09-28 네 구성 1차 측정, 2026-09-29 DSQL 단독 2차 측정, 두 실행 모두 잔여 리소스 0 확인). 공통 도착률 본 측정·경계 탐색·반복은 하지 않았다. 결과는 [공개 보고서](https://roboco.io/dsql-experiments/experiments/e002/).
 
 ## 질문과 가설
 

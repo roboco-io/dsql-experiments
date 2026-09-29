@@ -37,7 +37,7 @@ files.each do |file|
   errors << "#{name}: invalid status" unless %w[planned running completed].include?(data["status"])
   errors << "#{name}: invalid priority" unless %w[P0 P1 P2].include?(data["priority"])
   issue = data["issue"]
-  expected_url = "https://github.com/roboco-io/rds-experiments/issues/#{issue}"
+  expected_url = "https://github.com/roboco-io/dsql-experiments/issues/#{issue}"
   errors << "#{name}: invalid issue link" unless issue.is_a?(Integer) && issue.positive? && data["issue_url"] == expected_url
 
   next unless data["status"] == "completed"

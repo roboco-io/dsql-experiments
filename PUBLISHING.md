@@ -1,6 +1,6 @@
 # 실험 결과 공개 절차
 
-공개 사이트: <https://roboco.io/rds-experiments/>
+공개 사이트: <https://roboco.io/dsql-experiments/>
 
 실험별 이슈는 [실험 목록](experiments/README.md)에 연결되어 있습니다. 실험 코드는 `experiments/NNN-topic/`, 검토한 공개 보고서는 `docs/_experiments/eNNN.md`에서 관리합니다. 이슈를 닫는 것만으로 사이트 상태가 변경되지는 않습니다.
 
@@ -39,17 +39,17 @@ bundle exec ruby scripts/validate_reports.rb
 bundle exec jekyll build --source docs --destination _site
 python3 scripts/check_site.py
 git diff --check
-bundle exec jekyll serve --source docs --destination _site --baseurl /rds-experiments
+bundle exec jekyll serve --source docs --destination _site --baseurl /dsql-experiments
 ```
 
-미리보기는 <http://127.0.0.1:4000/rds-experiments/>에서 확인합니다. `_site/`는 생성물이며 Git에 넣지 않습니다. 저장소의 `docs/`만 빌드하고 내부 작업 계획인 `docs/superpowers/`는 제외합니다.
+미리보기는 <http://127.0.0.1:4000/dsql-experiments/>에서 확인합니다. `_site/`는 생성물이며 Git에 넣지 않습니다. 저장소의 `docs/`만 빌드하고 내부 작업 계획인 `docs/superpowers/`는 제외합니다.
 
 ## 배포 확인과 수정
 
 ```bash
 gh run list --workflow pages.yml --limit 5
 gh run view RUN_ID --log-failed
-gh api repos/roboco-io/rds-experiments/pages --jq .html_url
+gh api repos/roboco-io/dsql-experiments/pages --jq .html_url
 ```
 
 실패한 빌드는 이전 공개 결과를 덮어쓰지 않습니다. 원인을 수정한 커밋을 `main`에 반영하면 다시 배포합니다. 실험 원본·자격 증명·개인정보·인프라 상태를 `docs/`에 복사하지 않습니다.

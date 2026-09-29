@@ -1,0 +1,53 @@
+---
+layout: default
+---
+<article class="report">
+  <a class="back-link" href="{{ '/' | relative_url }}#experiments">실험 목록으로 돌아가기</a>
+  <header class="report-header">
+    <div class="report-meta"><span>종합</span>{% if page.updated_at %}<span>작성일 {{ page.updated_at | escape }}</span>{% endif %}</div>
+    <h1>{{ page.title | escape }}</h1>
+    {% if page.question %}<p class="report-question">{{ page.question | escape }}</p>{% endif %}
+  </header>
+  <div class="prose" id="report-body">{{ content }}</div>
+</article>
+<script>
+// Fold every "## section" into <details>. The narrative summary and the question stay open; the rest start
+// closed so the page stays short. Without JavaScript every section is simply shown.
+(function () {
+  var body = document.getElementById('report-body');
+  var heads = Array.prototype.filter.call(body.children, function (el) { return el.tagName === 'H2'; });
+  if (!heads.length) return;
+  var OPEN = ['결론', '판단 기준별 결과'];
+  heads.forEach(function (h) {
+    var d = document.createElement('details');
+    d.className = 'report-section';
+    d.id = h.id ? h.id + '-section' : '';
+    if (OPEN.indexOf(h.textContent.trim()) >= 0) d.open = true;
+    var s = document.createElement('summary');
+    h.parentNode.insertBefore(d, h);
+    d.appendChild(s);
+    s.appendChild(h);
+    while (d.nextSibling && d.nextSibling.tagName !== 'H2') d.appendChild(d.nextSibling);
+  });
+  var bar = document.createElement('div');
+  bar.className = 'fold-controls';
+  bar.innerHTML = '<button type="button" data-open="1">모두 펼치기</button><button type="button" data-open="0">모두 접기</button>';
+  bar.addEventListener('click', function (e) {
+    var v = e.target.getAttribute('data-open');
+    if (v === null) return;
+    body.querySelectorAll('details.report-section').forEach(function (d) { d.open = v === '1'; });
+  });
+  body.insertBefore(bar, body.firstChild);
+  function openHash() {
+    if (!location.hash) return;
+    var t = document.getElementById(decodeURIComponent(location.hash.slice(1)));
+    for (var n = t; n; n = n.parentElement) if (n.tagName === 'DETAILS') n.open = true;
+    if (t) t.scrollIntoView();
+  }
+  window.addEventListener('hashchange', openHash);
+  window.addEventListener('beforeprint', function () {
+    body.querySelectorAll('details.report-section').forEach(function (d) { d.open = true; });
+  });
+  openHash();
+})();
+</script>

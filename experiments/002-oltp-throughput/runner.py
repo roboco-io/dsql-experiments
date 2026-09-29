@@ -316,6 +316,12 @@ def cmd_cell(target, cell_json, out, no_reset=False):
                       window=[datetime.fromtimestamp(t_measure, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                               _now()],
                       generator={"cpu_pct": mr["generator_cpu_pct"], "lag_p99_ms": m["lag_p99_ms"]})
+        # a fresh connection: the one opened before the cell may have died with the network (E006 block)
+        try:
+            admin.close()
+        except Exception:  # noqa: BLE001
+            pass
+        admin = C.sync_connect_factory(target)()
         if no_reset:
             result["invariants"] = INV.check(INV.collect_cell(admin, cell.cell_id, inv_before), stats.ledger)
         else:

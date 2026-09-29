@@ -225,3 +225,47 @@ class ReviewFixIntegration(unittest.TestCase):
             self.assertEqual(out["status"], "ok", out.get("error"))
             self.assertEqual(out["invariants"]["violations"], [])
             self.assertGreaterEqual(out["pre_reset"]["receipts"], 1)
+
+
+@unittest.skipUnless(DSN, "set E002_PG_DSN to run")
+class NoResetIntegration(unittest.TestCase):
+    """Re-measure mode (2026-09-29): cells keep their rows; invariants look only at the cell's own rows."""
+
+    def test_cells_accumulate_and_each_is_checked_on_its_own_rows(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tgt = os.path.join(tmp, "t.json")
+            json.dump({"kind": "dsn", "dsn": DSN}, open(tgt, "w"))
+            R.main(["schema", "--target", tgt, "--out", f"{tmp}/s.json"])
+            self.assertEqual(json.load(open(f"{tmp}/s.json"))["sql_check"], "ok")
+            R.main(["load", "--target", tgt, "--out", f"{tmp}/l.json", "--fraction", "0.001", "--workers", "2"])
+            outs = []
+            for name in ("it-acc-1", "it-acc-2"):
+                cell = OL.Cell(name, "LOCAL", "open", 120.0, 0, 1, 1, 3, 0.001)
+                R.main(["cell", "--target", tgt, "--out", f"{tmp}/{name}.json", "--no-reset",
+                        "--cell-json", json.dumps(asdict(cell))])
+                outs.append(json.load(open(f"{tmp}/{name}.json")))
+            for out in outs:
+                self.assertEqual(out["status"], "ok", out.get("error"))
+                self.assertEqual(out["reset_mode"], "none")
+                self.assertNotIn("reset", out)
+                self.assertEqual(out["invariants"]["violations"], [], out["invariants"]["facts"])
+            with psycopg.connect(DSN, autocommit=True) as c:
+                kept = c.execute("SELECT count(*) FROM operation_receipts").fetchone()[0]
+            own = [o["invariants"]["facts"]["order_receipts"] + o["invariants"]["facts"]["cancel_receipts"]
+                   for o in outs]
+            self.assertGreater(min(own), 0)
+            self.assertEqual(kept, sum(own))          # both cells' rows are kept, each counted once
+
+    def test_a_bad_row_of_another_cell_does_not_fail_this_cell(self):
+        with psycopg.connect(DSN, autocommit=True) as c:
+            fresh_load(c)
+            c.execute("INSERT INTO operation_receipts (op_id, kind, ref_id, created_at) "
+                      "VALUES ('other:0:0', 'cancel', 0, now())")     # other cell's receipt, order 0 still placed
+        inv0 = None
+        with psycopg.connect(DSN, autocommit=True) as c:
+            inv0 = INV.inventory(c)
+        cell = OL.Cell("it-scope", "LOCAL", "open", 100.0, 0, 1, 1, 3, 0.001)
+        st = OL.run_cell({"kind": "dsn", "dsn": DSN}, cell, time.time() + 6, SMALL, processes=2)
+        with psycopg.connect(DSN, autocommit=True) as c:
+            out = INV.check(INV.collect_cell(c, cell.cell_id, inv0), st.ledger)
+        self.assertEqual(out["violations"], [], out["facts"])

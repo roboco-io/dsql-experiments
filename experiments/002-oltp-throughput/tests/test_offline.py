@@ -740,6 +740,16 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         self.assertEqual(c.selects, 1)
         self.assertEqual(c.applied, [[0, 1], [2, 3], [4]])
 
+    def test_cell_scope_matches_the_ids_the_workload_gives_the_cell(self):
+        import invariants as INV
+        import workload as W
+        lo, hi, op_lo, op_hi = INV.cell_scope("D1-r-2400.0-r01")
+        rid = W.ref_id("D1-r-2400.0-r01", 15, 123456)
+        self.assertTrue(lo <= rid < hi)
+        self.assertFalse(lo <= W.ref_id("D1-r-3600.0-r01", 0, 0) < hi)
+        self.assertTrue(op_lo <= "D1-r-2400.0-r01:15:123456" < op_hi)
+        self.assertFalse(op_lo <= "D1-r-2400.0-r010:0:0" < op_hi)
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

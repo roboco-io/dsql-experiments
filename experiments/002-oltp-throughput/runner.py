@@ -174,6 +174,7 @@ def cmd_schema(target, out_dir):
         INV.check(INV.collect(c), {"order_create": {"committed": 0, "ambiguous": 0},
                                    "cancel": {"committed": 0, "ambiguous": 0}})
         INV.reset(c)
+        INV.collect_cell(c, "sql-check", INV.inventory(c))
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError(f"reset/invariant SQL rejected: {getattr(exc, 'sqlstate', None)} "
                            f"{type(exc).__name__}") from None
@@ -288,13 +289,17 @@ def analyze(target) -> dict:
     return out
 
 
-def cmd_cell(target, cell_json, out):
+def cmd_cell(target, cell_json, out, no_reset=False):
     cell = OL.Cell(**json.loads(cell_json))
     sc = G.S_SCALE if cell.scale_fraction >= 1.0 else G.scaled(cell.scale_fraction)
     result = {"cell": asdict(cell), "status": "error", "started": _now()}
     try:
         admin = C.sync_connect_factory(target)()
-        result["pre_reset"] = INV.reset(admin)   # leftovers of a cell that died before its own reset
+        if no_reset:                               # re-measure mode: rows accumulate; checks see this cell only
+            result["reset_mode"] = "none"
+            inv_before = INV.inventory(admin)
+        else:
+            result["pre_reset"] = INV.reset(admin)   # leftovers of a cell that died before its own reset
         result["rtt_ms"] = _rtt_ms(admin)
         processes = os.cpu_count() or 1
         t_start = time.time() + start_delay_s(cell, processes)
@@ -311,8 +316,11 @@ def cmd_cell(target, cell_json, out):
                       window=[datetime.fromtimestamp(t_measure, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                               _now()],
                       generator={"cpu_pct": mr["generator_cpu_pct"], "lag_p99_ms": m["lag_p99_ms"]})
-        result["invariants"] = INV.check(INV.collect(admin), stats.ledger)
-        result["reset"] = INV.reset(admin)
+        if no_reset:
+            result["invariants"] = INV.check(INV.collect_cell(admin, cell.cell_id, inv_before), stats.ledger)
+        else:
+            result["invariants"] = INV.check(INV.collect(admin), stats.ledger)
+            result["reset"] = INV.reset(admin)
         admin.close()
         result["status"] = "ok"
     except Exception as exc:  # noqa: BLE001 - the orchestrator decides; never leak the endpoint
@@ -331,6 +339,7 @@ def main(argv=None):
     p.add_argument("--fraction", type=float, default=1.0)
     p.add_argument("--tables", default=",".join(SC.TABLES[:-1]))
     p.add_argument("--workers", type=int, default=32)
+    p.add_argument("--no-reset", action="store_true", help="cell: keep rows, check only this cell's rows")
     a = p.parse_args(argv)
     with open(a.target) as fh:
         target = json.load(fh)
@@ -343,7 +352,7 @@ def main(argv=None):
     elif a.command == "load":
         res = cmd_load(target, a.fraction, a.tables.split(","), a.workers, a.out + ".progress")
     else:
-        res = cmd_cell(target, a.cell_json, a.out)
+        res = cmd_cell(target, a.cell_json, a.out, a.no_reset)
     if a.command != "cell":
         _write(a.out, res)
     print(json.dumps({"command": a.command, "status": res.get("status", "ok")}))

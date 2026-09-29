@@ -6,6 +6,8 @@ work in batches below the DSQL 3,000-row transaction limit.
 """
 from __future__ import annotations
 
+import zlib
+
 from schema import RUN_ID_BASE
 
 B = RUN_ID_BASE
@@ -42,6 +44,57 @@ _ZERO = ("neg_stock", "stock_delta_mismatch", "orders_without_receipt", "orders_
 def collect(conn) -> dict:
     facts = {k: conn.execute(q).fetchone()[0] for k, q in QUERIES.items()}
     facts["neg_stock"], facts["stock_delta_mismatch"] = conn.execute(STOCK_SQL).fetchone()
+    return facts
+
+
+# Re-measure mode (2026-09-29): cells keep their rows (no reset) and each cell is checked on its own rows only.
+# workload.ref_id gives a cell the id block [B + crc << 30, B + (crc + 1) << 30); its op_ids start with "<cell>:".
+_R = "op_id LIKE %(op_like)s"             # a text range would depend on the collation (PG default ignores ':')
+_CELL_QUERIES = {
+    "order_receipts": f"SELECT count(*) FROM operation_receipts WHERE {_R} AND kind = 'order_create'",
+    "cancel_receipts": f"SELECT count(*) FROM operation_receipts WHERE {_R} AND kind = 'cancel'",
+    "run_orders": "SELECT count(*) FROM orders WHERE id >= %(lo)s AND id < %(hi)s",
+    "orders_without_receipt": "SELECT count(*) FROM orders o WHERE o.id >= %(lo)s AND o.id < %(hi)s AND NOT EXISTS "
+                              f"(SELECT 1 FROM operation_receipts r WHERE r.{_R} AND r.kind = 'order_create' "
+                              "AND r.ref_id = o.id)",
+    "orders_without_items": "SELECT count(*) FROM orders o WHERE o.id >= %(lo)s AND o.id < %(hi)s AND NOT EXISTS "
+                            "(SELECT 1 FROM order_items i WHERE i.order_id = o.id)",
+    "charge_rows": "SELECT count(*) FROM ledger WHERE id >= %(lo)s AND id < %(hi)s AND kind = 'charge'",
+    "refund_rows": "SELECT count(*) FROM ledger WHERE id >= %(lo)s AND id < %(hi)s AND kind = 'refund'",
+    "charge_total_mismatch": "SELECT count(*) FROM ledger l JOIN orders o ON o.id = l.order_id "
+                             "WHERE l.id >= %(lo)s AND l.id < %(hi)s AND l.kind = 'charge' AND l.amount <> o.total",
+    "refund_total_mismatch": "SELECT count(*) FROM ledger l JOIN orders o ON o.id = l.order_id "
+                             "WHERE l.id >= %(lo)s AND l.id < %(hi)s AND l.kind = 'refund' "
+                             "AND (l.amount <> o.total OR o.status <> 'cancelled')",
+    "cancelled_without_receipt": "SELECT count(*) FROM operation_receipts r JOIN orders o ON o.id = r.ref_id "
+                                 f"WHERE r.{_R} AND r.kind = 'cancel' AND o.status <> 'cancelled'",
+}
+_CELL_MOVED = ("SELECT i.product_id, sum(CASE WHEN r.kind = 'order_create' THEN i.qty ELSE -i.qty END) "
+               f"FROM operation_receipts r JOIN order_items i ON i.order_id = r.ref_id WHERE r.{_R} "
+               "GROUP BY i.product_id")
+
+
+def cell_scope(cell_id: str) -> tuple[int, int, str, str]:
+    """(id_lo, id_hi, op_lo, op_hi) of the rows one cell creates (see workload.ref_id and make_op)."""
+    lo = B + (zlib.crc32(cell_id.encode()) << 30)
+    return lo, lo + (1 << 30), f"{cell_id}:", f"{cell_id};"      # ';' sorts right after ':'
+
+
+def inventory(conn) -> dict:
+    return dict(conn.execute("SELECT product_id, qty FROM inventory").fetchall())
+
+
+def collect_cell(conn, cell_id: str, inv_before: dict) -> dict:
+    """Facts of one cell from its own rows; stock from the inventory change across the cell."""
+    lo, hi, op_lo, op_hi = cell_scope(cell_id)
+    esc = op_lo.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    p = {"lo": lo, "hi": hi, "op_like": esc + "%"}
+    facts = {k: conn.execute(q, p).fetchone()[0] for k, q in _CELL_QUERIES.items()}
+    moved = {pid: d for pid, d in conn.execute(_CELL_MOVED, p).fetchall()}
+    after = inventory(conn)
+    facts["neg_stock"] = sum(1 for q in after.values() if q < 0)
+    facts["stock_delta_mismatch"] = sum(1 for pid in set(after) | set(moved)
+                                        if inv_before.get(pid, 0) - after.get(pid, 0) != moved.get(pid, 0))
     return facts
 
 

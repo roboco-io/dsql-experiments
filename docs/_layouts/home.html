@@ -1,0 +1,63 @@
+---
+layout: default
+---
+{%- assign lang = page.lang | default: 'en' -%}
+{%- assign t = site.data.i18n[lang] -%}
+{% assign experiments = site.experiments | where: 'lang', lang | sort: 'slug' %}
+{% assign planned = experiments | where: 'status', 'planned' %}
+{% assign running = experiments | where: 'status', 'running' %}
+{% assign completed = experiments | where: 'status', 'completed' %}
+<section class="intro" aria-labelledby="intro-title">
+  <div class="intro-copy">
+    <h1 id="intro-title">{{ t.home_title }}</h1>
+    <p class="lead">{{ t.home_lead }}</p>
+    <a class="primary-link" href="{{ t.prefix | append: '/decision/' | relative_url }}">{{ t.home_decision }}</a>
+    <p><a href="{{ t.prefix | append: '/guide/' | relative_url }}">{{ t.home_guide }}</a> · <a href="#experiments">{{ t.home_list }}</a></p>
+  </div>
+  <aside class="comparison" aria-labelledby="comparison-title">
+    <h2 id="comparison-title">{{ t.compare_title }}</h2>
+    <div class="subject"><span>D1</span><strong>Aurora DSQL</strong><small>{{ t.subject_note }}</small></div>
+    <ul class="baselines">
+      <li><span>R1</span><div>RDS PostgreSQL<small>{{ t.r1_note }}</small></div></li>
+      <li><span>A1</span><div>Aurora PostgreSQL<small>Provisioned</small></div></li>
+      <li><span>A2</span><div>Aurora PostgreSQL<small>Serverless v2</small></div></li>
+    </ul>
+  </aside>
+</section>
+<section class="progress-strip" aria-label="{{ t.progress_label }}">
+  <p>{{ t.progress_label }}</p>
+  <dl><div><dt>{{ t.statuses.planned }}</dt><dd>{{ planned.size }}</dd></div><div><dt>{{ t.statuses.running }}</dt><dd>{{ running.size }}</dd></div><div><dt>{{ t.statuses.completed }}</dt><dd>{{ completed.size }}</dd></div></dl>
+</section>
+<section class="section" id="results" aria-labelledby="results-title">
+  <div class="section-heading"><h2 id="results-title">{{ t.results_title }}</h2><span>{{ t.results_note }}</span></div>
+  {% if completed.size == 0 %}
+  <div class="empty-state"><h3>{{ t.empty_title }}</h3><p>{{ t.empty_body }}</p></div>
+  {% else %}
+  <div class="published-results">
+    {% for experiment in completed %}
+    <article><span class="experiment-id">{{ experiment.experiment_id }}</span><h3><a href="{{ experiment.url | relative_url }}">{{ experiment.title | escape }}</a></h3><p>{{ experiment.summary | escape }}</p><small>{{ t.measured_on }} {{ experiment.measured_at | escape }}</small></article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</section>
+<section class="section" id="experiments" aria-labelledby="experiments-title">
+  <div class="section-heading"><h2 id="experiments-title">{{ t.list_title }}</h2><a href="{{ site.repository_url }}/blob/main/EXPERIMENT_PLAN.md">{{ t.list_plan }}</a></div>
+  <p class="section-intro">{{ t.list_intro }}</p>
+  <div class="experiment-list">
+    {% for experiment in experiments %}
+    <article class="experiment-row">
+      <span class="experiment-id">{{ experiment.experiment_id }}</span>
+      <div class="experiment-description"><h3><a href="{{ experiment.url | relative_url }}">{{ experiment.title | escape }}</a></h3><p>{{ experiment.question | escape }}</p>{% if experiment.status == 'completed' and experiment.result %}<p class="experiment-result"><strong>{{ t.result_label }}</strong> {{ experiment.result | escape }}</p>{% endif %}{% if experiment.status == 'completed' %}{% assign parts = experiment.content | split: '<h2' %}{% assign head = parts[1] | split: '</h2>' | first %}{% if head contains t.summary_heading %}{% assign sec = parts[1] | remove_first: head | remove_first: '</h2>' %}<details class="experiment-summary"><summary>{{ t.summary_toggle }}</summary><div class="prose">{{ sec }}</div><a href="{{ experiment.url | relative_url }}">{{ t.full_report }}</a></details>{% endif %}{% endif %}</div>
+      <div class="experiment-state"><span class="status status-{{ experiment.status }}">{{ t.statuses[experiment.status] }}</span><small>{{ experiment.priority }}</small><a href="{{ experiment.issue_url }}">{{ t.issue }}{{ experiment.issue }}</a></div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+<section class="section method" aria-labelledby="method-title">
+  <div><h2 id="method-title">{{ t.method_title }}</h2><p>{{ t.method_intro }}</p></div>
+  <dl>
+    <div><dt>{{ t.method_perf_t }}</dt><dd>{{ t.method_perf }}</dd></div>
+    <div><dt>{{ t.method_ease_t }}</dt><dd>{{ t.method_ease }}</dd></div>
+    <div><dt>{{ t.method_cost_t }}</dt><dd>{{ t.method_cost }}</dd></div>
+  </dl>
+</section>

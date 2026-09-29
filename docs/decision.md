@@ -1,94 +1,95 @@
 ---
 layout: page
-title: "DSQL 도입 판단 종합 보고서"
-question: "우리 업무를 Aurora DSQL로 운영해도 되는가, 된다면 어떤 조건에서인가?"
+title: "DSQL Adoption Decision Report"
+question: "Can we run our workloads on Aurora DSQL, and if so, under what conditions?"
+lang: "en"
 permalink: /decision/
 updated_at: "2026-09-29"
 ---
 
-## 결론
+## Conclusion
 
-**Aurora DSQL은 프로덕션 OLTP에 쓸 수 있습니다. 다만 모든 서비스에 맞는 선택은 아니며, 아래 조건을 만족하는 서비스에서 유리합니다.** 이 판단은 서울 리전에서 같은 주문 업무를 DSQL과 기존 서비스 세 가지(RDS PostgreSQL Multi-AZ, Aurora Provisioned, Aurora Serverless v2)에 실행한 12개 실험(2026-09-24–29)에 근거합니다. 12개 가운데 E001, E002, E004는 계획에 가까운 규모로, 나머지 9개는 최소 범위(MVP)로 실행했습니다.
+**Aurora DSQL can be used for production OLTP. It is not the right choice for every service, however; it has the advantage for services that meet the conditions below.** This judgment is based on 12 experiments (2026-09-24–29) that ran the same order-processing workload in the Seoul Region on DSQL and on three existing services (RDS PostgreSQL Multi-AZ, Aurora Provisioned, and Aurora Serverless v2). Of the 12, E001, E002, and E004 were run at close to their planned scale, and the other nine were run at minimum scope (MVP).
 
-DSQL이 확실히 앞선 점은 네 가지입니다. 첫째, 처리량이 가장 크게 확장되었습니다. 연결 256개에서 초당 2만 4천 건 이상을 지연 목표 안에서 처리했고, 같은 조건의 기존 서비스는 모두 목표를 넘었습니다(E002). 둘째, 요청이 없을 때 비용이 거의 들지 않고 15분 쉬었다가도 첫 요청에 0.3초 안에 응답했습니다(E009, E010). 셋째, 커밋한 데이터가 어느 연결에서나 바로 보여 읽기 라우팅이 필요 없었습니다(E005). 넷째, 클러스터를 30초 남짓에 만들고 용량·비밀번호·vacuum을 관리할 필요가 없었습니다(E011).
+DSQL was clearly ahead in four areas. First, its throughput scaled the furthest. With 256 connections it handled more than 24,000 transactions per second within the latency target, while every existing service exceeded the target under the same conditions (E002). Second, it costs almost nothing when there are no requests, and after 15 minutes idle it answered the first request within 0.3 seconds (E009, E010). Third, committed data was immediately visible from any connection, so no read routing was needed (E005). Fourth, a cluster was created in a little over 30 seconds, and there was no capacity, password, or vacuum to manage (E011).
 
-대가도 분명합니다. 요청 하나의 지연은 Aurora보다 3–6배 길었고(쓰기 p95 약 30–40 ms), 기존 PostgreSQL SQL의 절반가량을 고쳐야 했으며(E001), 충돌 재시도·트랜잭션 분할·연결 교체 같은 애플리케이션 코드가 필수였습니다(E004, E008, E003). 인기 상품처럼 같은 행에 쓰기가 몰리면 재시도 뒤에도 실패가 크게 남았고(E004), 원하는 시각으로 되돌리는 시점 복원이 없었습니다(E007). 높은 부하가 하루 종일 이어지면 요청 수에 비례하는 요금이 고정 인스턴스보다 비쌌습니다(E010).
+The costs are just as clear. Latency per request was 3–6 times that of Aurora (write p95 about 30–40 ms), about half of the existing PostgreSQL SQL had to be rewritten (E001), and application code for conflict retries, transaction splitting, and connection rotation was mandatory (E004, E008, E003). When writes concentrated on the same rows, as with a popular product, a large share of requests still failed after retries (E004), and there was no point-in-time restore to a chosen moment (E007). When high load continued all day, the per-request pricing cost more than a fixed instance (E010).
 
-## 판단 기준별 결과
+## Results by criterion
 
-| 기준 | DSQL | 기존 서비스 | 판정 | 근거 |
+| Criterion | DSQL | Existing services | Verdict | Evidence |
 | --- | --- | --- | --- | --- |
-| 정합성 | 재시도·업무 ID 영수증 구현 시 불변식 위반 0건(경합 66셀, 연결 장애) | 같음 | 동등 | [E004](../experiments/e004/), [E006](../experiments/e006/) |
-| 처리량(연결 256, SLO 안) | 24,541 TPS 이상 | A2 11,559, R1 5,839, A1 3,375 TPS | DSQL 우세 | [E002](../experiments/e002/) |
-| 요청 지연 | 쓰기 p95 약 28–41 ms, 읽기 약 5–10 ms | A2 쓰기 약 7–9 ms, 읽기 약 2–3 ms | 기존 우세 | [E002](../experiments/e002/) |
-| 급증(최대 2,000 TPS) | 개입 없이 실패 0 | A2 개입 없이 실패 0 | 동등 | [E009](../experiments/e009/) |
-| 15분 유휴 뒤 첫 요청 | 연결 0.1–0.3초 | A2(0 ACU 일시 정지) 15초 초과 실패 | DSQL 우세 | [E009](../experiments/e009/) |
-| 쓰기 직후 읽기 | 다른 연결에서도 즉시 | A2 reader는 22–33 ms 뒤 | DSQL 우세 | [E005](../experiments/e005/) |
-| 연결 | 새 연결 p50 15 ms, 1,000개 동시 연결 거절 0. 요청마다 새 연결 시 처리량 1/70 | 비교 안 함 | 풀 필수 | [E003](../experiments/e003/) |
-| 경합 집중 | 커밋 시점 충돌, 연결 256에서 재시도 후 최종 실패 39% | 잠금 대기로 처리량 급감(소형 인스턴스) | 둘 다 설계 필요 | [E004](../experiments/e004/) |
-| 운영 중 DDL | 1,100만 행 비동기 인덱스 12분, 빌드 중 쓰기 p99 30.7→79.8 ms, SLO 유지 | 비교 안 함 | 가능 | [E008](../experiments/e008/) |
-| 트랜잭션 한도 | 3,000행, 300초 초과 시 거절 | 한도 없음 | 제약 | [E008](../experiments/e008/) |
-| 큰 집계 | 1,100만 행 전체 집계 36초, 약 1,700 DPU. OLTP 간섭 작음 | 비교 안 함 | 제약 | [E012](../experiments/e012/) |
-| 실수 복구 | 시점 복원 없음. 전체 백업(481초) → 새 클러스터(129초) | A2 시점 복원 587초 | 기존 우세(RPO) | [E007](../experiments/e007/) |
-| SQL 이관 | 35개 중 16개 수정 필요 | 거의 수정 없음 | 기존 우세 | [E001](../experiments/e001/) |
-| 인프라 운영 | 생성 32초, 삭제 약 2분, 용량·비밀번호·vacuum 없음 | A2 생성 약 11분, 삭제 약 15분 | DSQL 우세 | [E011](../experiments/e011/) |
-| 비용 | 요청 백만 건당 약 $0.31, 유휴 시 거의 0, 스토리지 $0.40/GB-월 | R1 시간당 약 $1.22(고정), 스토리지 $0.12–0.131/GB-월 | 부하 모양에 따름 | [E010](../experiments/e010/) |
+| Correctness | 0 invariant violations with retries and business-ID receipts implemented (66 contention cells, connection failures) | Same | Equal | [E004](../experiments/e004/), [E006](../experiments/e006/) |
+| Throughput (256 connections, within SLO) | 24,541 TPS or more | A2 11,559, R1 5,839, A1 3,375 TPS | DSQL ahead | [E002](../experiments/e002/) |
+| Request latency | Write p95 about 28–41 ms, read about 5–10 ms | A2 write about 7–9 ms, read about 2–3 ms | Existing ahead | [E002](../experiments/e002/) |
+| Surge (up to 2,000 TPS) | 0 failures without intervention | A2 0 failures without intervention | Equal | [E009](../experiments/e009/) |
+| First request after 15 minutes idle | Connection in 0.1–0.3 seconds | A2 (paused at 0 ACU) failed after more than 15 seconds | DSQL ahead | [E009](../experiments/e009/) |
+| Read immediately after write | Immediate, even from other connections | A2 reader after 22–33 ms | DSQL ahead | [E005](../experiments/e005/) |
+| Connections | New connection p50 15 ms, 0 rejections with 1,000 concurrent connections. Throughput 1/70 with a new connection per request | Not compared | Pool required | [E003](../experiments/e003/) |
+| Concentrated contention | Conflicts at commit time; 39% final failure after retries at 256 connections | Throughput dropped sharply from lock waits (small instance) | Design needed for both | [E004](../experiments/e004/) |
+| Online DDL | Async index on 11 million rows in 12 minutes; write p99 30.7→79.8 ms during build, SLO maintained | Not compared | Possible | [E008](../experiments/e008/) |
+| Transaction limits | Rejected above 3,000 rows or 300 seconds | No limit | Constraint | [E008](../experiments/e008/) |
+| Large aggregation | Full aggregation of 11 million rows in 36 seconds, about 1,700 DPU. Little interference with OLTP | Not compared | Constraint | [E012](../experiments/e012/) |
+| Recovery from mistakes | No point-in-time restore. Full backup (481 seconds) → new cluster (129 seconds) | A2 point-in-time restore 587 seconds | Existing ahead (RPO) | [E007](../experiments/e007/) |
+| SQL migration | 16 of 35 needed changes | Almost no changes | Existing ahead | [E001](../experiments/e001/) |
+| Infrastructure operations | Create 32 seconds, delete about 2 minutes, no capacity, passwords, or vacuum | A2 create about 11 minutes, delete about 15 minutes | DSQL ahead | [E011](../experiments/e011/) |
+| Cost | About $0.31 per million requests, nearly 0 when idle, storage $0.40/GB-month | R1 about $1.22 per hour (fixed), storage $0.12–0.131/GB-month | Depends on load shape | [E010](../experiments/e010/) |
 
-판정은 이번 측정 범위 안에서 어느 쪽이 도입 판단에 유리했는지를 뜻합니다. "동등"은 차이를 찾지 못했다는 뜻이며 차이가 없다는 증명은 아닙니다.
+The verdict indicates which side was more favorable for the adoption decision within the scope of these measurements. "Equal" means we found no difference; it is not proof that there is no difference.
 
-## DSQL이 맞는 서비스
+## Services that suit DSQL
 
-- **새로 설계하는 서비스:** 처음부터 DSQL의 SQL 범위, 재시도, 트랜잭션 한도에 맞춰 만들면 E001·E004·E008의 이관 부담이 대부분 사라집니다.
-- **부하가 들쭉날쭉하거나 쉬는 시간이 긴 서비스:** 평균 부하가 약 1,100 TPS보다 낮으면(이번 업무 기준) DSQL이 고정 인스턴스보다 쌌고, 8시간 일하고 16시간 쉬는 패턴에서는 하루 약 $9 대 약 $29였습니다. 쉬었다가도 첫 요청이 바로 처리됩니다.
-- **급증이 예측되지 않는 서비스:** 용량을 미리 정하지 않아도 2만 4천 TPS까지 지연이 거의 늘지 않았습니다.
-- **운영 인력이 적은 팀:** 인스턴스 크기, 장애 조치 대기 복제본, 비밀번호 교체, vacuum, reader 라우팅을 관리하지 않아도 됩니다.
-- **자기 쓰기를 바로 읽어야 하는 화면:** 복제 지연이 없어 쓰기 직후 읽기 라우팅 코드가 필요 없습니다.
+- **Newly designed services:** If a service is built from the start to fit DSQL's SQL coverage, retries, and transaction limits, most of the migration burden seen in E001, E004, and E008 disappears.
+- **Services with spiky load or long idle periods:** When average load was below about 1,100 TPS (for this workload), DSQL was cheaper than a fixed instance; for a pattern of 8 hours of work and 16 hours of idle, it was about $9 versus about $29 per day. The first request after an idle period is handled right away.
+- **Services with unpredictable surges:** Without provisioning capacity in advance, latency barely increased up to 24,000 TPS.
+- **Teams with few operations staff:** There is no need to manage instance sizes, failover standby replicas, password rotation, vacuum, or reader routing.
+- **Screens that must read their own writes immediately:** There is no replication lag, so no routing code is needed for reads right after writes.
 
-## DSQL을 피하거나 신중해야 할 서비스
+## Services that should avoid DSQL or adopt it with caution
 
-- **기존 PostgreSQL 기능에 깊이 의존하는 서비스:** PL/pgSQL·트리거, sequence·`serial`, 임시 테이블, 파티션, READ COMMITTED, `statement_timeout`을 쓰는 코드는 다시 작성해야 합니다.
-- **같은 행에 쓰기가 몰리는 업무:** 인기 상품 재고, 전역 카운터처럼 소수 행에 경합이 집중되면 재시도 뒤에도 실패가 크게 남습니다. 행 분할 같은 스키마 재설계가 먼저입니다.
-- **요청당 지연이 중요한 업무:** 한 요청에서 쿼리 여러 개를 차례로 실행하면 DSQL의 쿼리당 지연(쓰기 약 30–40 ms)이 누적됩니다.
-- **높은 부하가 하루 종일 이어지는 서비스:** 평균 수천 TPS가 계속되면 요청 수에 비례하는 DPU 요금이 고정 인스턴스보다 비쌉니다.
-- **대량 배치·분석이 많은 서비스:** 3,000행·300초 한도로 배치를 나눠야 하고, 큰 집계는 처리량만큼 과금됩니다. 분석은 별도 저장소로 분리하는 편이 안전합니다.
-- **초 단위 복구 시점이 필요한 서비스:** 시점 복원이 없어 복구 가능한 최신 시점이 백업 주기로 정해집니다.
-- **데이터가 매우 큰 서비스:** 스토리지 단가가 Aurora의 약 3.3배입니다.
+- **Services that depend heavily on existing PostgreSQL features:** Code that uses PL/pgSQL or triggers, sequences or `serial`, temporary tables, partitions, READ COMMITTED, or `statement_timeout` must be rewritten.
+- **Workloads where writes concentrate on the same rows:** When contention concentrates on a few rows, such as stock for a popular product or a global counter, a large share of requests still fails after retries. Schema redesign, such as splitting rows, has to come first.
+- **Workloads where per-request latency matters:** If one request runs several queries one after another, DSQL's per-query latency (write about 30–40 ms) accumulates.
+- **Services with high load all day:** When an average of several thousand TPS is sustained, DPU charges proportional to request count cost more than a fixed instance.
+- **Services with heavy bulk batch or analytics work:** Batches must be split to fit the 3,000-row and 300-second limits, and large aggregations are billed in proportion to the work processed. Separating analytics into another store is the safer option.
+- **Services that need recovery points to the second:** Without point-in-time restore, the latest recoverable point is determined by the backup interval.
+- **Services with very large data:** The storage unit price is about 3.3 times that of Aurora.
 
-## 도입 전 필수 준비
+## Required preparation before adoption
 
-구체적인 코드 예시와 코딩 에이전트용 규칙은 [Aurora DSQL 사용 가이드](../guide/)에 정리했습니다.
+Concrete code examples and rules for coding agents are in the [Aurora DSQL usage guide](../guide/).
 
-1. **재시도와 멱등 처리:** 커밋 시점 충돌(`40001`)을 다시 시도하고, 커밋 응답을 못 받은 요청은 업무 ID로 결과를 확인한 뒤 재시도합니다(E004, E006).
-2. **트랜잭션 분할:** 3,000행·300초를 넘는 적재·삭제·배치를 나눕니다(E008).
-3. **연결 관리:** 연결 풀을 쓰고, 1시간 안에 연결을 교체하고, IAM 토큰을 재사용하며, 동시 첫 연결에서 토큰 서명이 몰리지 않게 합니다(E003).
-4. **스키마 배포 절차:** 비동기 인덱스는 `indisvalid` 확인 뒤 사용하고, 외래 키 쪽 인덱스를 직접 만듭니다(E002, E008).
-5. **복구 설계:** 허용 가능한 데이터 손실 시간에 맞춰 AWS Backup 주기를 정하고, 새 클러스터로 전환하는 절차(엔드포인트·IAM 권한 변경)를 준비합니다(E007).
-6. **비용 확인:** 실제 업무로 요청당 DPU를 측정하고, 평균 부하와 유휴 비율로 고정 인스턴스와 비교합니다(E010).
+1. **Retries and idempotency:** Retry commit-time conflicts (`40001`), and for requests whose commit response was not received, check the result by business ID before retrying (E004, E006).
+2. **Transaction splitting:** Split loads, deletes, and batches that exceed 3,000 rows or 300 seconds (E008).
+3. **Connection management:** Use a connection pool, rotate connections within 1 hour, reuse IAM tokens, and prevent token signing from piling up when many first connections happen at once (E003).
+4. **Schema deployment procedure:** Use an async index only after checking `indisvalid`, and create indexes on the referencing side of foreign keys yourself (E002, E008).
+5. **Recovery design:** Set the AWS Backup interval according to the acceptable data-loss window, and prepare the procedure for switching to a new cluster (endpoint and IAM permission changes) (E007).
+6. **Cost check:** Measure DPU per request with the real workload, and compare with a fixed instance using average load and idle ratio (E010).
 
-## 근거의 한계
+## Limits of the evidence
 
-- **실행 규모:** 대부분의 측정은 1회입니다. 반복 간 편차를 측정하지 않았고, 9개 실험은 계획의 일부만 실행한 MVP입니다. 각 보고서의 "계획과 달라진 점"에 빠진 범위를 적었습니다.
-- **비교 조건:** DSQL과 대조군의 처리량 탐색은 다른 날, 다른 러너 사양으로 실행했습니다. DSQL은 퍼블릭 엔드포인트, 대조군은 VPC 내부 경로입니다. E004의 대조군은 소형 버스터블 인스턴스였습니다.
-- **DSQL 상한:** DSQL 처리량 24,541 TPS는 부하 발생기 포화 근처의 하한이며 서비스 상한이 아닙니다.
-- **업무와 데이터:** 한 가지 주문 업무 혼합과 약 5 GiB 데이터입니다. 다른 쿼리 패턴이나 TB 규모 데이터에서는 지연·DPU·비용이 달라질 수 있습니다.
-- **가용성:** DSQL 내부 장애와 AZ 장애, Aurora·RDS의 장애 조치 시간은 측정하지 않았습니다.
-- **비용:** 서울 리전 On-Demand 단가, 측정값의 선형 환산입니다. 할인·크레딧, Aurora I/O의 부하별 분리, 사람의 작업 시간은 금액에 넣지 않았습니다.
+- **Scale of runs:** Most measurements were taken once. Variance between repetitions was not measured, and nine experiments are MVPs that ran only part of their plan. The missing scope is listed under "Deviations from the plan" in each report.
+- **Comparison conditions:** The throughput searches for DSQL and the control groups were run on different days with different runner specifications. DSQL used a public endpoint, and the control groups used a path inside the VPC. The control group in E004 was a small burstable instance.
+- **DSQL ceiling:** The DSQL throughput of 24,541 TPS is a lower bound near load-generator saturation, not the service ceiling.
+- **Workload and data:** One order-processing workload mix and about 5 GiB of data. Latency, DPU, and cost may differ for other query patterns or TB-scale data.
+- **Availability:** DSQL internal failures, AZ failures, and Aurora and RDS failover times were not measured.
+- **Cost:** Seoul Region On-Demand prices and linear extrapolation of measured values. Discounts and credits, per-load separation of Aurora I/O, and human working time are not included in the amounts.
 
-## 실험 목록과 비용
+## Experiment list and cost
 
-| 실험 | 주제 | 범위 | 보고서 |
+| Experiment | Topic | Scope | Report |
 | --- | --- | --- | --- |
-| E001 | SQL 호환성 | 계획 범위 | [보기](../experiments/e001/) |
-| E002 | OLTP 처리량과 지연 | 탐색까지, 본 측정 제외 | [보기](../experiments/e002/) |
-| E003 | 연결과 인증 | MVP, DSQL 단독 | [보기](../experiments/e003/) |
-| E004 | 경합과 정합성 | 계획 조건, 소형 대조군 | [보기](../experiments/e004/) |
-| E005 | 쓰기 직후 읽기 | MVP, D1·A2 | [보기](../experiments/e005/) |
-| E006 | 연결 장애와 커밋 보존 | MVP, D1·A2 | [보기](../experiments/e006/) |
-| E007 | 백업과 실수 복구 | MVP, D1·A2 | [보기](../experiments/e007/) |
-| E008 | 운영 중 DDL과 한도 | MVP, DSQL 단독 | [보기](../experiments/e008/) |
-| E009 | 급증과 유휴 뒤 재개 | MVP, D1·A2 | [보기](../experiments/e009/) |
-| E010 | 비용과 선택 기준 | MVP, 측정값 환산 | [보기](../experiments/e010/) |
-| E011 | 개발·운영 편의성 | MVP, 작업 기록 정리 | [보기](../experiments/e011/) |
-| E012 | 대용량 조회와 간섭 | MVP, DSQL 단독 | [보기](../experiments/e012/) |
+| E001 | SQL compatibility | Planned scope | [View](../experiments/e001/) |
+| E002 | OLTP throughput and latency | Up to search, main measurement excluded | [View](../experiments/e002/) |
+| E003 | Connections and authentication | MVP, DSQL only | [View](../experiments/e003/) |
+| E004 | Contention and correctness | Planned conditions, small control group | [View](../experiments/e004/) |
+| E005 | Read immediately after write | MVP, D1 and A2 | [View](../experiments/e005/) |
+| E006 | Connection failures and commit durability | MVP, D1 and A2 | [View](../experiments/e006/) |
+| E007 | Backup and recovery from mistakes | MVP, D1 and A2 | [View](../experiments/e007/) |
+| E008 | Online DDL and limits | MVP, DSQL only | [View](../experiments/e008/) |
+| E009 | Surges and resuming after idle | MVP, D1 and A2 | [View](../experiments/e009/) |
+| E010 | Cost and selection criteria | MVP, extrapolated from measurements | [View](../experiments/e010/) |
+| E011 | Development and operations convenience | MVP, compiled from work logs | [View](../experiments/e011/) |
+| E012 | Large queries and interference | MVP, DSQL only | [View](../experiments/e012/) |
 
-연구 전체의 실험 비용은 약 $74입니다. E001 약 $0.08, E004 약 $2.07, E002 1차 $48.57은 Cost Explorer 청구액이고, E002 2차와 E003·E008·E012 약 $18.6, E005·E006·E007·E009 약 $5.1은 CloudWatch 사용량으로 계산한 추정치이며 청구액 대조 전입니다. 모든 실험 자원은 삭제했고, 실행마다 잔여 리소스 0을 확인했습니다.
+The experiment cost for the whole study is about $74. E001 (about $0.08), E004 (about $2.07), and the first E002 run ($48.57) are billed amounts from Cost Explorer. The second E002 run together with E003, E008, and E012 (about $18.6), and E005, E006, E007, and E009 (about $5.1) are estimates calculated from CloudWatch usage and have not yet been reconciled with billed amounts. All experiment resources were deleted, and zero remaining resources was confirmed after each run.

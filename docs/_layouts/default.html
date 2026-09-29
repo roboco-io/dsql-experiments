@@ -1,31 +1,49 @@
+{%- assign lang = page.lang | default: 'en' -%}
+{%- assign t = site.data.i18n[lang] -%}
+{%- assign base_path = page.url -%}
+{%- if lang != 'en' -%}{%- assign base_path = page.url | remove_first: t.prefix -%}{%- endif -%}
 <!doctype html>
-<html lang="ko">
+<html lang="{{ lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% if page.title %}{{ page.title | escape }} | {% endif %}{{ site.title | escape }}</title>
-  <meta name="description" content="{{ page.question | default: site.description | escape }}">
+  <title>{% if page.title %}{{ page.title | escape }} | {% endif %}{{ t.site_title | escape }}</title>
+  <meta name="description" content="{{ page.question | default: t.site_description | escape }}">
   <link rel="canonical" href="{{ page.url | absolute_url }}">
+  {%- unless page.url == '/404.html' %}
+  <link rel="alternate" hreflang="en" href="{{ base_path | absolute_url }}">
+  <link rel="alternate" hreflang="ko" href="{{ '/ko' | append: base_path | absolute_url }}">
+  <link rel="alternate" hreflang="ja" href="{{ '/ja' | append: base_path | absolute_url }}">
+  <link rel="alternate" hreflang="x-default" href="{{ base_path | absolute_url }}">
+  {%- endunless %}
   <link rel="stylesheet" href="{{ '/assets/style.css' | relative_url }}">
   <link rel="icon" href="{{ '/assets/favicon.svg' | relative_url }}" type="image/svg+xml">
 </head>
 <body>
-  <a class="skip-link" href="#main">본문으로 건너뛰기</a>
+  <a class="skip-link" href="#main">{{ t.skip }}</a>
   <header class="site-header">
-    <a class="brand" href="{{ '/' | relative_url }}"><span class="brand-mark" aria-hidden="true">D</span>{{ site.title }}</a>
-    <nav aria-label="주 메뉴">
-      <a href="{{ '/' | relative_url }}#experiments">실험 목록</a>
-      <a href="{{ '/' | relative_url }}#results">공개 결과</a>
-      <a href="{{ '/decision/' | relative_url }}">종합 판단</a>
-      <a href="{{ '/guide/' | relative_url }}">사용 가이드</a>
+    <a class="brand" href="{{ t.prefix | append: '/' | relative_url }}"><span class="brand-mark" aria-hidden="true">D</span>{{ t.site_title }}</a>
+    <nav aria-label="{{ t.nav_label }}">
+      <a href="{{ t.prefix | append: '/' | relative_url }}#experiments">{{ t.nav_experiments }}</a>
+      <a href="{{ t.prefix | append: '/' | relative_url }}#results">{{ t.nav_results }}</a>
+      <a href="{{ t.prefix | append: '/decision/' | relative_url }}">{{ t.nav_decision }}</a>
+      <a href="{{ t.prefix | append: '/guide/' | relative_url }}">{{ t.nav_guide }}</a>
       <a href="{{ site.repository_url }}">GitHub</a>
     </nav>
+    {%- unless page.url == '/404.html' %}
+    <nav class="lang-switch" aria-label="{{ t.lang_label }}">
+      {%- for code in site.languages %}
+      {%- assign other = site.data.i18n[code] %}
+      <a href="{{ other.prefix | append: base_path | relative_url }}" hreflang="{{ code }}" lang="{{ code }}"{% if code == lang %} aria-current="true"{% endif %}>{{ other.name }}</a>
+      {%- endfor %}
+    </nav>
+    {%- endunless %}
   </header>
   <main id="main">{{ content }}</main>
   <footer class="site-footer">
-    <p>roboco-io <span aria-hidden="true">/</span> 공개 데이터베이스 실험 기록</p>
-    <p><a href="{{ site.repository_url }}/blob/main/EXPERIMENT_PLAN.md">전체 실험 계획</a> · <a href="{{ site.repository_url }}/issues">진행 상황과 논의</a></p>
-    <p class="footer-note">측정한 사실과 가정을 구분합니다. 원본 로그·자격 증명·개인정보는 공개하지 않습니다.</p>
+    <p>roboco-io <span aria-hidden="true">/</span> {{ t.footer_title }}</p>
+    <p><a href="{{ site.repository_url }}/blob/main/EXPERIMENT_PLAN.md">{{ t.footer_plan }}</a> · <a href="{{ site.repository_url }}/issues">{{ t.footer_issues }}</a></p>
+    <p class="footer-note">{{ t.footer_note }}</p>
   </footer>
 </body>
 </html>

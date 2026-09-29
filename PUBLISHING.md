@@ -2,7 +2,15 @@
 
 공개 사이트: <https://roboco.io/dsql-experiments/>
 
-실험별 이슈는 [실험 목록](experiments/README.md)에 연결되어 있습니다. 실험 코드는 `experiments/NNN-topic/`, 검토한 공개 보고서는 `docs/_experiments/eNNN.md`에서 관리합니다. 이슈를 닫는 것만으로 사이트 상태가 변경되지는 않습니다.
+실험별 이슈는 [실험 목록](experiments/README.md)에 연결되어 있습니다. 실험 코드는 `experiments/NNN-topic/`, 검토한 공개 보고서는 언어별로 `docs/_experiments/ko/eNNN.md`(원문), `docs/_experiments/en/eNNN.md`(영어, 사이트 기본), `docs/_experiments/ja/eNNN.md`(일본어)에서 관리합니다. 이슈를 닫는 것만으로 사이트 상태가 변경되지는 않습니다.
+
+## 다국어
+
+공개 사이트는 영어가 기본(루트 주소)이고 한국어는 `/ko/`, 일본어는 `/ja/` 아래에 있습니다(2026-09-29 결정). 보고서는 한국어로 먼저 쓰고, 같은 작업에서 영어와 일본어로 번역합니다.
+
+- 각 보고서 파일은 `lang`과 `permalink`(영어 `/experiments/eNNN/`, 한국어 `/ko/experiments/eNNN/`, 일본어 `/ja/experiments/eNNN/`)를 가집니다. `experiment_id`, `status`, `issue`, `measured_at`, `code_commit`, `run_ids`, 정리 메타데이터는 세 언어가 같아야 합니다(검증기가 확인).
+- 필수 절 제목: 영어 `Results summary`·`Production readiness`·`Test conditions`·`Performance results`·`Development and operations`·`Cost`·`Conclusions and limitations`·`Cleanup record`, 일본어 `結果の要約`·`本番利用の観点`·`実行条件`·`性能結果`·`開発・運用のしやすさ`·`費用`·`結論と限界`·`後片付けの記録`. 프로덕션 관점 문단 길이는 한국어 500자, 영어 1,300자, 일본어 700자 이내입니다.
+- 종합 판단(`decision.md`)과 사용 가이드(`guide.md`)도 `docs/`(영어), `docs/ko/`, `docs/ja/`에 같은 구조로 둡니다. 화면 문구는 `docs/_data/i18n.yml`에서 언어별로 관리합니다.
 
 ## 보고서 갱신
 

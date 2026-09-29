@@ -1,22 +1,24 @@
 ---
 layout: default
 ---
+{%- assign lang = page.lang | default: 'en' -%}
+{%- assign t = site.data.i18n[lang] -%}
 <article class="report">
-  <a class="back-link" href="{{ '/' | relative_url }}#experiments">실험 목록으로 돌아가기</a>
+  <a class="back-link" href="{{ t.prefix | append: '/' | relative_url }}#experiments">{{ t.back }}</a>
   <header class="report-header">
-    <div class="report-meta"><span>{{ page.experiment_id }}</span><span class="status status-{{ page.status }}">{{ site.data.statuses[page.status] }}</span><span>{{ page.priority }}</span></div>
+    <div class="report-meta"><span>{{ page.experiment_id }}</span><span class="status status-{{ page.status }}">{{ t.statuses[page.status] }}</span><span>{{ page.priority }}</span></div>
     <h1>{{ page.title | escape }}</h1>
     <p class="report-question">{{ page.question | escape }}</p>
     <div class="report-links">
-      <a href="{{ page.issue_url }}">이슈 #{{ page.issue }}</a>
-      <a href="{{ site.repository_url }}/blob/main/EXPERIMENT_PLAN.md#{{ page.slug }}">측정 계획</a>
-      {% if page.measured_at %}<span>측정일 {{ page.measured_at | escape }}</span>{% endif %}
+      <a href="{{ page.issue_url }}">{{ t.issue }}{{ page.issue }}</a>
+      <a href="{{ site.repository_url }}/blob/main/EXPERIMENT_PLAN.md#{{ page.slug }}">{{ t.plan }}</a>
+      {% if page.measured_at %}<span>{{ t.measured }} {{ page.measured_at | escape }}</span>{% endif %}
     </div>
   </header>
   {% unless page.status == 'completed' %}
-  <aside class="notice" aria-label="공개 상태">{% if page.status == 'running' %}실험 진행 중입니다. 아래 기록은 잠정 결과이며 최종 결론이 아닙니다.{% else %}계획 단계입니다. 아직 공개된 측정 결과가 없습니다.{% endif %}</aside>
+  <aside class="notice" aria-label="{{ t.statuses[page.status] }}">{% if page.status == 'running' %}{{ t.notice_running }}{% else %}{{ t.notice_planned }}{% endif %}</aside>
   {% endunless %}
-  <div class="prose" id="report-body">{{ content }}</div>
+  <div class="prose" id="report-body" data-open="{{ t.report_open | jsonify | escape }}" data-expand="{{ t.expand_all | escape }}" data-collapse="{{ t.collapse_all | escape }}">{{ content }}</div>
 </article>
 <script>
 // Fold every "## section" into <details>. The narrative summary and the question stay open; the rest start
@@ -25,7 +27,7 @@ layout: default
   var body = document.getElementById('report-body');
   var heads = Array.prototype.filter.call(body.children, function (el) { return el.tagName === 'H2'; });
   if (!heads.length) return;
-  var OPEN = ['결과 요약', '확인할 질문'];
+  var OPEN = JSON.parse(body.getAttribute('data-open') || '[]');
   heads.forEach(function (h) {
     var d = document.createElement('details');
     d.className = 'report-section';
@@ -39,7 +41,9 @@ layout: default
   });
   var bar = document.createElement('div');
   bar.className = 'fold-controls';
-  bar.innerHTML = '<button type="button" data-open="1">모두 펼치기</button><button type="button" data-open="0">모두 접기</button>';
+  bar.innerHTML = '<button type="button" data-open="1"></button><button type="button" data-open="0"></button>';
+  bar.children[0].textContent = body.getAttribute('data-expand');
+  bar.children[1].textContent = body.getAttribute('data-collapse');
   bar.addEventListener('click', function (e) {
     var v = e.target.getAttribute('data-open');
     if (v === null) return;

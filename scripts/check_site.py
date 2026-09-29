@@ -36,8 +36,10 @@ for path in files:
     content = path.read_text()
     page.feed(content)
     pages[path.resolve()] = page
-    if page.language != "ko":
-        errors.append(f"{path}: missing Korean language metadata")
+    rel = path.relative_to(site).parts
+    expected = rel[0] if rel and rel[0] in ("ko", "ja") else "en"     # English is the default at the root
+    if page.language != expected:
+        errors.append(f"{path}: html lang is {page.language}, expected {expected}")
     if "{{" in content or "{%" in content:
         errors.append(f"{path}: unresolved Liquid template")
 
@@ -63,10 +65,12 @@ for path, page in pages.items():
         elif url.fragment and target in pages and unquote(url.fragment) not in pages[target].ids:
             errors.append(f"{path}: missing anchor {link}")
 
-reports = list((root / "docs/_experiments").glob("*.md"))
+reports = list((root / "docs/_experiments").glob("*/*.md"))
 for report in reports:
-    if not (site / "experiments" / report.stem / "index.html").exists():
-        errors.append(f"Missing rendered report: {report.stem}")
+    lang = report.parent.name
+    out = site / ("" if lang == "en" else lang) / "experiments" / report.stem / "index.html"
+    if not out.exists():
+        errors.append(f"Missing rendered report: {lang}/{report.stem}")
 for path in site.rglob("*"):
     if path.is_file() and ("artifacts" in path.parts or "superpowers" in path.parts or path.suffix in {".log", ".tfstate", ".pem", ".key"}):
         errors.append(f"Non-public artifact in output: {path}")

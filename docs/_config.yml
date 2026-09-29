@@ -1,9 +1,10 @@
-title: DSQL 실험 노트
-description: Aurora DSQL의 성능과 개발·운영 편의성을 기존 RDS·Aurora와 비교하는 공개 실험 기록
+title: DSQL Experiment Notes
+description: Public experiments comparing Aurora DSQL with RDS and Aurora on performance, operations effort, constraints, and cost
 url: https://roboco.io
 baseurl: /dsql-experiments
 repository_url: https://github.com/roboco-io/dsql-experiments
-lang: ko
+lang: en
+languages: [en, ko, ja]   # en is the default at the root; ko and ja live under /ko/ and /ja/
 timezone: Asia/Seoul
 markdown: kramdown
 kramdown:
@@ -12,7 +13,7 @@ kramdown:
 collections:
   experiments:
     output: true
-    permalink: /experiments/:name/
+    permalink: /experiments/:name/   # each report sets its own language-specific permalink
 defaults:
   - scope:
       path: ""

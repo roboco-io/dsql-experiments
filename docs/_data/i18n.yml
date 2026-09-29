@@ -1,0 +1,178 @@
+# UI strings per language. Korean is the source language of the reports; English is the site default (root URLs).
+en:
+  name: English
+  prefix: ""
+  site_title: DSQL Experiment Notes
+  site_description: Public experiments comparing Aurora DSQL with RDS and Aurora on performance, operations effort, constraints, and cost
+  skip: Skip to content
+  nav_label: Main menu
+  nav_experiments: Experiments
+  nav_results: Results
+  nav_decision: Decision
+  nav_guide: Usage guide
+  lang_label: Language
+  footer_title: Public database experiment records
+  footer_plan: Full experiment plan (Korean)
+  footer_issues: Progress and discussion
+  footer_note: We separate measured facts from assumptions. Raw logs, credentials, and personal data are not published.
+  statuses: {planned: Planned, running: Running, completed: Completed}
+  back: Back to the experiment list
+  issue: "Issue #"
+  plan: Measurement plan
+  measured: Measured
+  written: Written
+  summary_label: Summary
+  notice_running: This experiment is in progress. The records below are provisional, not final conclusions.
+  notice_planned: This experiment is planned. No measurements have been published yet.
+  expand_all: Expand all
+  collapse_all: Collapse all
+  report_open: ["Results summary", "Question", "Conclusion", "Results by criterion", "Rules for coding agents"]
+  summary_heading: Results summary
+  home_title: "Same workload,<br>how different is DSQL?"
+  home_lead: "From throughput and latency to the hours spent on development and operations.<br class=\"desktop-break\">We compare DSQL directly with established databases and publish the evidence."
+  home_decision: Read the adoption decision
+  home_guide: DSQL usage guide
+  home_list: Browse the experiments
+  compare_title: What we compare
+  subject_note: Single Region · primary subject
+  r1_note: Multi-AZ DB instance
+  progress_label: Experiment progress
+  results_title: Published results
+  results_note: Measured and reviewed records
+  empty_title: No measurement results have been published yet.
+  empty_body: When experiments finish, performance comparisons, work time, cost, and limits appear here.
+  measured_on: Measured
+  list_title: Experiments
+  list_plan: Read the full plan
+  list_intro: "The order is OLTP, then bursts and idle periods, then large queries. Ease of use and cost are recorded from first creation to deletion. Experiment numbers are identifiers, not the run order."
+  result_label: Result
+  summary_toggle: Show the summary and production readiness
+  full_report: Read the full report
+  method_title: What do we compare, and how?
+  method_intro: We do not assume that DSQL wins. We judge only results that meet the same workload, consistency, and SLO.
+  method_perf_t: Performance
+  method_perf: Successful throughput within deadlines and p95/p99 latency, including connection and retry time, with the variation across repeated runs.
+  method_ease_t: Ease of use
+  method_ease: Actual work time, manual steps, and code changes for first connection, migration, scaling, diagnosis, and recovery, separating first-time learning from repeated operations.
+  method_cost_t: Cost and constraints
+  method_cost: Cost per successful task under the same requirements. We state unsupported features and unmeasured items and delete every experiment resource when done.
+  nf_title: Page not found.
+  nf_body: The address may have changed, or the report is not published yet.
+ko:
+  name: 한국어
+  prefix: /ko
+  site_title: DSQL 실험 노트
+  site_description: Aurora DSQL의 성능과 개발·운영 편의성을 기존 RDS·Aurora와 비교하는 공개 실험 기록
+  skip: 본문으로 건너뛰기
+  nav_label: 주 메뉴
+  nav_experiments: 실험 목록
+  nav_results: 공개 결과
+  nav_decision: 종합 판단
+  nav_guide: 사용 가이드
+  lang_label: 언어
+  footer_title: 공개 데이터베이스 실험 기록
+  footer_plan: 전체 실험 계획
+  footer_issues: 진행 상황과 논의
+  footer_note: 측정한 사실과 가정을 구분합니다. 원본 로그·자격 증명·개인정보는 공개하지 않습니다.
+  statuses: {planned: 계획, running: 진행 중, completed: 완료}
+  back: 실험 목록으로 돌아가기
+  issue: "이슈 #"
+  plan: 측정 계획
+  measured: 측정일
+  written: 작성일
+  summary_label: 종합
+  notice_running: 실험 진행 중입니다. 아래 기록은 잠정 결과이며 최종 결론이 아닙니다.
+  notice_planned: 계획 단계입니다. 아직 공개된 측정 결과가 없습니다.
+  expand_all: 모두 펼치기
+  collapse_all: 모두 접기
+  report_open: ["결과 요약", "확인할 질문", "결론", "판단 기준별 결과", "에이전트용 규칙"]
+  summary_heading: 결과 요약
+  home_title: "같은 업무에서,<br>DSQL은 얼마나 달라질까."
+  home_lead: "처리량과 지연부터 개발·운영에 드는 시간까지.<br class=\"desktop-break\">기존 데이터베이스와 직접 비교하고, 측정한 근거를 공개합니다."
+  home_decision: 종합 판단 읽기
+  home_guide: DSQL 사용 가이드
+  home_list: 실험 목록 살펴보기
+  compare_title: 비교 대상
+  subject_note: 단일 리전 · 주 평가 대상
+  r1_note: Multi-AZ DB 인스턴스
+  progress_label: 실험 진행 현황
+  results_title: 공개 결과
+  results_note: 측정·검토를 마친 기록
+  empty_title: 아직 공개된 측정 결과가 없습니다.
+  empty_body: 실험이 완료되면 성능 비교, 작업 시간, 비용과 적용 한계를 이곳에 공개합니다.
+  measured_on: 측정일
+  list_title: 실험 목록
+  list_plan: 전체 계획 읽기
+  list_intro: OLTP → 급증·유휴 → 대용량 조회 순으로 진행합니다. 편의성과 비용은 첫 생성부터 삭제까지 기록합니다. 실험 번호는 실행 순서가 아닌 식별자입니다.
+  result_label: 결과
+  summary_toggle: 요약과 프로덕션 사용 관점 보기
+  full_report: 보고서 전체 보기
+  method_title: 무엇을, 어떻게 비교하나요?
+  method_intro: DSQL의 우위를 전제하지 않습니다. 같은 업무·정합성·SLO를 만족한 결과로 판단합니다.
+  method_perf_t: 성능
+  method_perf: 기한 내 성공 처리량과 p95/p99 지연. 연결·재시도 시간을 포함하고 반복 측정의 편차를 공개합니다.
+  method_ease_t: 편의성
+  method_ease: 첫 연결·이관·확장·진단·복구의 실제 작업 시간, 수동 개입과 수정량. 초기 학습과 반복 운영을 구분합니다.
+  method_cost_t: 비용과 제약
+  method_cost: 동일 요구를 충족하는 성공 업무당 비용. 미지원 기능·미측정 항목을 밝히고 종료 후 모든 실험용 리소스를 삭제합니다.
+  nf_title: 페이지를 찾을 수 없습니다.
+  nf_body: 주소가 바뀌었거나 아직 공개되지 않은 보고서입니다.
+ja:
+  name: 日本語
+  prefix: /ja
+  site_title: DSQL実験ノート
+  site_description: Aurora DSQLの性能と開発・運用のしやすさを既存のRDS・Auroraと比較する公開実験記録
+  skip: 本文へスキップ
+  nav_label: メインメニュー
+  nav_experiments: 実験一覧
+  nav_results: 公開結果
+  nav_decision: 導入判断
+  nav_guide: 利用ガイド
+  lang_label: 言語
+  footer_title: 公開データベース実験記録
+  footer_plan: 実験計画の全文（韓国語）
+  footer_issues: 進捗と議論
+  footer_note: 測定した事実と仮定を区別します。元のログ・認証情報・個人情報は公開しません。
+  statuses: {planned: 計画, running: 進行中, completed: 完了}
+  back: 実験一覧に戻る
+  issue: "Issue #"
+  plan: 測定計画
+  measured: 測定日
+  written: 作成日
+  summary_label: 総合
+  notice_running: 実験は進行中です。以下の記録は暫定結果であり、最終的な結論ではありません。
+  notice_planned: 計画段階です。まだ公開された測定結果はありません。
+  expand_all: すべて開く
+  collapse_all: すべて閉じる
+  report_open: ["結果の要約", "確認する問い", "結論", "判断基準別の結果", "コーディングエージェント向けルール"]
+  summary_heading: 結果の要約
+  home_title: "同じ業務で、<br>DSQLはどれほど違うのか。"
+  home_lead: "処理量と遅延から、開発・運用にかかる時間まで。<br class=\"desktop-break\">既存のデータベースと直接比較し、測定の根拠を公開します。"
+  home_decision: 導入判断を読む
+  home_guide: DSQL利用ガイド
+  home_list: 実験一覧を見る
+  compare_title: 比較対象
+  subject_note: 単一リージョン · 主な評価対象
+  r1_note: Multi-AZ DBインスタンス
+  progress_label: 実験の進捗
+  results_title: 公開結果
+  results_note: 測定・レビューを終えた記録
+  empty_title: まだ公開された測定結果はありません。
+  empty_body: 実験が完了すると、性能比較、作業時間、費用と適用の限界をここに公開します。
+  measured_on: 測定日
+  list_title: 実験一覧
+  list_plan: 計画の全文を読む
+  list_intro: OLTP、急増・アイドル、大規模な集計の順に進めます。使いやすさと費用は最初の作成から削除まで記録します。実験番号は実行順ではなく識別子です。
+  result_label: 結果
+  summary_toggle: 要約と本番利用の観点を見る
+  full_report: レポート全文を見る
+  method_title: 何を、どのように比較するのか
+  method_intro: DSQLの優位を前提にしません。同じ業務・整合性・SLOを満たした結果で判断します。
+  method_perf_t: 性能
+  method_perf: 期限内に成功した処理量とp95/p99の遅延。接続・再試行の時間を含め、繰り返し測定のばらつきを公開します。
+  method_ease_t: 使いやすさ
+  method_ease: 初回接続・移行・拡張・診断・復旧の実作業時間、手動介入と修正量。初期学習と繰り返しの運用を区別します。
+  method_cost_t: 費用と制約
+  method_cost: 同じ要件を満たす成功業務あたりの費用。未対応の機能・未測定の項目を明示し、終了後はすべての実験用リソースを削除します。
+  nf_title: ページが見つかりません。
+  nf_body: アドレスが変わったか、まだ公開されていないレポートです。

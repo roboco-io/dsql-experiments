@@ -168,10 +168,10 @@ def cell_estimate_usd(data, cell, pilot, seen_attempt_tps) -> float:
     return usd
 
 
-def load_booking_usd(data, cfg) -> float:
+def load_booking_usd(data, cfg, fraction=1.0) -> float:
     prior = data.get("loads", {}).get(f"{cfg}:1.0")
     hours = LOAD_REPEAT_FACTOR * prior["seconds"] / 3600 if prior and prior.get("seconds") else LOAD_HOURS_EST
-    return config_rate(data, cfg) * hours
+    return config_rate(data, cfg) * hours * max(min(fraction, 1.0), 0.125)   # a partial load books its share
 
 
 def aligned_window(w0: str, w1: str):
@@ -642,7 +642,7 @@ def do_load(sess, m, args, cfgs):
             if not pilot or "load_slice_dpu" not in pilot:
                 raise S.SafetyError("run `pilot` before a full D1 load")
             return full_load_d1(sess, m, guard, pilot)
-        return load_config(sess, m, cfg, args.fraction, guard, load_booking_usd(m.data, cfg))
+        return load_config(sess, m, cfg, args.fraction, guard, load_booking_usd(m.data, cfg, args.fraction))
     return _print_outcomes("load", parallel(cfgs, one))
 
 

@@ -783,6 +783,11 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         d = {"kind": "dsql", "host": "abc.dsql.ap-northeast-2.on.aws"}
         self.assertEqual(MP.reader_target(d)["host"], d["host"])
 
+    def test_a_partial_load_books_a_proportional_time(self):
+        data = {"resources": [{"config": "A2", "state": "created", "extra": {"rate_usd_per_h": 12.8}}]}
+        self.assertAlmostEqual(E.load_booking_usd(data, "A2", 0.02), 12.8 * E.LOAD_HOURS_EST * 0.125)
+        self.assertAlmostEqual(E.load_booking_usd(data, "A2", 0.5), 12.8 * E.LOAD_HOURS_EST * 0.5)
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

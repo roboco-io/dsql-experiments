@@ -1,5 +1,6 @@
 # UI strings per language. Korean is the source language of the reports; English is the site default (root URLs).
 en:
+  og_locale: en_US
   name: English
   prefix: ""
   site_title: DSQL Experiment Notes
@@ -59,6 +60,7 @@ en:
   nf_title: Page not found.
   nf_body: The address may have changed, or the report is not published yet.
 ko:
+  og_locale: ko_KR
   name: 한국어
   prefix: /ko
   site_title: DSQL 실험 노트
@@ -118,6 +120,7 @@ ko:
   nf_title: 페이지를 찾을 수 없습니다.
   nf_body: 주소가 바뀌었거나 아직 공개되지 않은 보고서입니다.
 ja:
+  og_locale: ja_JP
   name: 日本語
   prefix: /ja
   site_title: DSQL実験ノート

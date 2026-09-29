@@ -311,3 +311,16 @@ class MvpProbeIntegration(unittest.TestCase):
             self.assertEqual(out["single"][name][0]["hash"], out["single"][name][1]["hash"])
         self.assertEqual(out["interference"]["cell"]["status"], "ok", out["interference"]["cell"].get("error"))
         self.assertGreater(out["interference"]["side"]["runs"], 0)
+
+    def test_e005_visibility_on_another_connection(self):
+        out = self._probe("e005", trials=20)
+        v = out["other_connection_same_endpoint"]
+        self.assertEqual(v["trials"], 20)
+        self.assertEqual(v["stale_first_read"], 0)       # a single PostgreSQL primary: visible at once
+        self.assertNotIn("reader_endpoint", out)         # a plain DSN has no reader endpoint
+
+    def test_e009_spike_phases_and_idle(self):
+        out = self._probe("e009-spike", base=50.0, phases=[[0.5, 2], [2.0, 2]])
+        self.assertEqual([p["cell"]["status"] for p in out["phases"]], ["ok", "ok"])
+        idle = self._probe("e009-idle", cycles=1, idle_s=0)
+        self.assertIn("first_read_ms", idle["cycles"][0])

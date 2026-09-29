@@ -776,6 +776,13 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         self.assertEqual(E.ramp_summary([(2400, "pass"), (3600, "invalid")]),
                          {"q": 2400, "status": "lower_bound", "first_fail": None})
 
+    def test_reader_target_uses_the_aurora_reader_endpoint(self):
+        import mvp_probes as MP
+        t = {"kind": "rds", "host": "e002-x-a2.cluster-abc.ap-northeast-2.rds.amazonaws.com"}
+        self.assertEqual(MP.reader_target(t)["host"], "e002-x-a2.cluster-ro-abc.ap-northeast-2.rds.amazonaws.com")
+        d = {"kind": "dsql", "host": "abc.dsql.ap-northeast-2.on.aws"}
+        self.assertEqual(MP.reader_target(d)["host"], d["host"])
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

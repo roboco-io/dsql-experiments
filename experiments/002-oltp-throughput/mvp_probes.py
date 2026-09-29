@@ -269,4 +269,147 @@ def e012(target, out_dir, fraction=1.0, rate=1000.0, warmup_s=60, measure_s=300,
     return out
 
 
-PROBES = {"e003": e003, "e008": e008, "e012": e012}
+# ---------------------------------------------------------------- E005: read-after-write visibility
+def reader_target(target) -> dict:
+    """Aurora's reader endpoint differs from the cluster endpoint only by '.cluster-ro-'."""
+    t = dict(target)
+    if t.get("kind") != "dsql" and ".cluster-" in t.get("host", ""):
+        t["host"] = t["host"].replace(".cluster-", ".cluster-ro-", 1)
+    return t
+
+
+def _visibility(write_c, read_c, table, n, poll_ms=10, limit_s=5.0):
+    delays, stale, censored = [], 0, 0
+    for i in range(n):
+        write_c.execute(f"INSERT INTO {table} (id, v) VALUES (%s, %s)", (i, i))     # autocommit: acked = committed
+        t0 = time.monotonic()
+        first = True
+        while True:
+            if read_c.execute(f"SELECT 1 FROM {table} WHERE id = %s", (i,)).fetchone():
+                delays.append((time.monotonic() - t0) * 1000)
+                break
+            if first:
+                stale += 1
+            first = False
+            if time.monotonic() - t0 > limit_s:
+                censored += 1
+                break
+            time.sleep(poll_ms / 1000)
+    return {"trials": n, "stale_first_read": stale, "censored_over_5s": censored, "visible_after_ms": pct(delays)}
+
+
+def e005(target, trials=200, **_) -> dict:
+    table = "mvp_visibility"
+    w = C.sync_connect_factory(target)()
+    w.execute(f"DROP TABLE IF EXISTS {table}")
+    w.execute(f"CREATE TABLE {table} (id bigint PRIMARY KEY, v int)")
+    out = {"kind": target["kind"]}
+    try:
+        same = C.sync_connect_factory(target)()
+        out["other_connection_same_endpoint"] = _visibility(w, same, table, trials)
+        same.close()
+        rt = reader_target(target)
+        if rt.get("host") != target.get("host"):
+            w.execute(f"DELETE FROM {table}")
+            rd = C.sync_connect_factory(rt)()
+            out["reader_endpoint"] = _visibility(w, rd, table, trials)
+            out["reader_is_replica"] = rd.execute("SELECT pg_is_in_recovery()").fetchone()[0]
+            rd.close()
+    finally:
+        w.execute(f"DROP TABLE IF EXISTS {table}")
+        w.close()
+    return out
+
+
+# ---------------------------------------------------------------- E006: client-side connection loss
+def _db_ips(target) -> list[str]:
+    import socket
+    if target.get("kind") == "dsn":
+        return []
+    return sorted({a[4][0] for a in socket.getaddrinfo(target["host"], 5432, proto=socket.IPPROTO_TCP)})
+
+
+def _blackhole(ips, add):
+    import subprocess
+    for ip in ips:
+        subprocess.run(["ip", "route", "add" if add else "del", "blackhole", f"{ip}/32"], check=add)
+
+
+def _first_success_after(target, limit_s=300):
+    connect, t0 = C.sync_connect_factory(target), time.monotonic()
+    attempts = 0
+    while time.monotonic() - t0 < limit_s:
+        attempts += 1
+        try:
+            c = connect()
+            c.execute("SELECT 1").fetchone()
+            c.close()
+            return {"s": round(time.monotonic() - t0, 2), "attempts": attempts}
+        except Exception:  # noqa: BLE001
+            time.sleep(0.1)
+    return {"s": None, "attempts": attempts}
+
+
+def e006(target, out_dir, fraction=1.0, rate=300.0, warmup_s=30, measure_s=150, block_at_s=40, block_s=30,
+         **_) -> dict:
+    """Drop the runner's packets to the DB for block_s during an OLTP cell (a client/network fault, not a
+    database failover), then reconcile commits through the receipts (per-cell invariants)."""
+    ips = _db_ips(target)
+
+    def side():
+        _blackhole(ips, True)
+        t_block = time.time()
+        time.sleep(block_s)
+        _blackhole(ips, False)
+        return {"blocked_ips": len(ips), "block_s": block_s, "block_started": t_block,
+                "reconnect": _first_success_after(target)}
+    cell = OL.Cell("E006-block", target.get("config", "X"), "open", rate, 0, 1, warmup_s, measure_s, fraction)
+    try:
+        return _cell_with(target, cell, out_dir, side if ips else None, side_delay_s=warmup_s + block_at_s)
+    finally:
+        try:
+            _blackhole(ips, False)
+        except Exception:  # noqa: BLE001 - already removed
+            pass
+
+
+# ---------------------------------------------------------------- E009: spike and first request after idle
+def e009_spike(target, out_dir, fraction=1.0, base=1000.0, phases=((0.2, 120), (2.0, 60), (1.0, 120), (0.05, 60)),
+               **_) -> dict:
+    out = []
+    for i, (f, sec) in enumerate(phases):
+        cell = OL.Cell(f"E009-p{i}-{int(base * f)}", target.get("config", "X"), "open", base * f, 0, 1, 0, sec,
+                       fraction)
+        out.append({"rate": base * f, "seconds": sec, **_cell_with(target, cell, out_dir)})
+    return {"phases": out}
+
+
+def e009_idle(target, cycles=2, idle_s=900, **_) -> dict:
+    """No connection at all for idle_s, then time the first connection, the first read and the next 20 reads."""
+    out = []
+    for _ in range(cycles):
+        time.sleep(idle_s)
+        t0 = time.monotonic()
+        rec = {"idle_s": idle_s}
+        try:
+            c = C.sync_connect_factory(target)()
+            rec["connect_ms"] = round((time.monotonic() - t0) * 1000, 1)
+            t1 = time.monotonic()
+            c.execute("SELECT name FROM products WHERE id = 1").fetchone()
+            rec["first_read_ms"] = round((time.monotonic() - t1) * 1000, 1)
+            lat = []
+            for k in range(20):
+                t2 = time.monotonic()
+                c.execute("SELECT name FROM products WHERE id = %s", (k + 2,)).fetchone()
+                lat.append((time.monotonic() - t2) * 1000)
+            rec["next_reads_ms"] = pct(lat)
+            c.close()
+        except Exception as exc:  # noqa: BLE001
+            rec["error"] = _err(exc)
+            rec["failed_after_ms"] = round((time.monotonic() - t0) * 1000, 1)
+        out.append(rec)
+    return {"cycles": out}
+
+
+PROBES = {"e003": e003, "e005": e005, "e006": e006, "e008": e008, "e009-spike": e009_spike,
+          "e009-idle": e009_idle, "e012": e012}

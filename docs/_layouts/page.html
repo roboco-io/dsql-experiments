@@ -17,7 +17,7 @@ layout: default
   var body = document.getElementById('report-body');
   var heads = Array.prototype.filter.call(body.children, function (el) { return el.tagName === 'H2'; });
   if (!heads.length) return;
-  var OPEN = ['결론', '판단 기준별 결과'];
+  var OPEN = ['결론', '판단 기준별 결과', '에이전트용 규칙'];
   heads.forEach(function (h) {
     var d = document.createElement('details');
     d.className = 'report-section';

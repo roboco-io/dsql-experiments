@@ -69,6 +69,10 @@ def cleanup_backup(sess, m) -> dict:
         if IN.code(exc) not in ("AccessDeniedException", "ResourceNotFoundException"):
             raise
         return {"vault": "absent"}
+    active = ("CREATED", "PENDING", "RUNNING", "ABORTING")
+    IN.wait_until(lambda: not [j for j in b.list_backup_jobs(ByBackupVaultName=vault)["BackupJobs"]
+                               if j["State"] in active], "backup jobs finished", 7200, 30)
+    rps = b.list_recovery_points_by_backup_vault(BackupVaultName=vault)["RecoveryPoints"]
     for rp in rps:
         b.delete_recovery_point(BackupVaultName=vault, RecoveryPointArn=rp["RecoveryPointArn"])
     IN.wait_until(lambda: not b.list_recovery_points_by_backup_vault(BackupVaultName=vault)["RecoveryPoints"],
@@ -78,14 +82,15 @@ def cleanup_backup(sess, m) -> dict:
     return {"vault": "deleted", "recovery_points_deleted": len(rps)}
 
 
-def _wait_job(fetch, done, what, limit_s=7200):
+def _wait_job(fetch, done, what, limit_s=7200, key="Status"):
+    """Backup jobs report `State`, restore jobs `Status`."""
     t0 = time.monotonic()
     while time.monotonic() - t0 < limit_s:
         j = fetch()
-        if j["Status"] in done:
+        if j[key] in done:
             return j, round(time.monotonic() - t0, 1)
-        if j["Status"] in ("FAILED", "ABORTED", "EXPIRED"):
-            raise RuntimeError(f"{what} {j['Status']}: {j.get('StatusMessage', '')[:200]}")
+        if j[key] in ("FAILED", "ABORTED", "EXPIRED", "PARTIAL"):
+            raise RuntimeError(f"{what} {j[key]}: {j.get('StatusMessage', '')[:200]}")
         time.sleep(15)
     raise RuntimeError(f"{what} timed out")
 
@@ -95,7 +100,7 @@ def d1_backup(sess, m, role_arn, vault):
     arn = next(r["extra"]["arn"] for r in m.data["resources"]
                if r["config"] == "D1" and r["type"] == "dsql_cluster" and r["state"] != "deleted")
     job = b.start_backup_job(BackupVaultName=vault, ResourceArn=arn, IamRoleArn=role_arn)["BackupJobId"]
-    j, secs = _wait_job(lambda: b.describe_backup_job(BackupJobId=job), ("COMPLETED",), "backup")
+    j, secs = _wait_job(lambda: b.describe_backup_job(BackupJobId=job), ("COMPLETED",), "backup", key="State")
     return {"backup_s": secs, "recovery_point": j["RecoveryPointArn"], "backup_size_bytes": j.get("BackupSizeInBytes")}
 
 

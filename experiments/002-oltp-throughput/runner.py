@@ -332,7 +332,7 @@ def cmd_cell(target, cell_json, out, no_reset=False):
 
 def main(argv=None):
     p = argparse.ArgumentParser()
-    p.add_argument("command", choices=("probe", "schema", "load", "cell", "add-indexes"))
+    p.add_argument("command", choices=("probe", "schema", "load", "cell", "add-indexes", "mvp"))
     p.add_argument("--target", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--cell-json")
@@ -340,6 +340,8 @@ def main(argv=None):
     p.add_argument("--tables", default=",".join(SC.TABLES[:-1]))
     p.add_argument("--workers", type=int, default=32)
     p.add_argument("--no-reset", action="store_true", help="cell: keep rows, check only this cell's rows")
+    p.add_argument("--probe", help="mvp: e003 | e008 | e012 (see mvp_probes.py)")
+    p.add_argument("--probe-json", default="{}", help="mvp: keyword overrides, e.g. shorter waits in tests")
     a = p.parse_args(argv)
     with open(a.target) as fh:
         target = json.load(fh)
@@ -349,6 +351,10 @@ def main(argv=None):
         res = cmd_add_indexes(target)
     elif a.command == "schema":
         res = cmd_schema(target, os.path.dirname(os.path.abspath(a.out)))
+    elif a.command == "mvp":
+        import mvp_probes
+        kw = {"out_dir": os.path.dirname(os.path.abspath(a.out)), "fraction": a.fraction, **json.loads(a.probe_json)}
+        res = {"probe": a.probe, "started": _now(), **mvp_probes.PROBES[a.probe](target, **kw), "finished": _now()}
     elif a.command == "load":
         res = cmd_load(target, a.fraction, a.tables.split(","), a.workers, a.out + ".progress")
     else:

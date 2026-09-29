@@ -269,3 +269,45 @@ class NoResetIntegration(unittest.TestCase):
         with psycopg.connect(DSN, autocommit=True) as c:
             out = INV.check(INV.collect_cell(c, cell.cell_id, inv0), st.ledger)
         self.assertEqual(out["violations"], [], out["facts"])
+
+
+@unittest.skipUnless(DSN, "set E002_PG_DSN to run")
+class MvpProbeIntegration(unittest.TestCase):
+    """E003/E008/E012 MVP probes (2026-09-29) run end to end through `runner.py mvp` with short waits."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.mkdtemp()
+        cls.tgt = os.path.join(cls.tmp, "t.json")
+        json.dump({"kind": "dsn", "dsn": DSN, "config": "LOCAL"}, open(cls.tgt, "w"))
+        R.main(["schema", "--target", cls.tgt, "--out", f"{cls.tmp}/s.json"])
+        R.main(["load", "--target", cls.tgt, "--out", f"{cls.tmp}/l.json", "--fraction", "0.001", "--workers", "2"])
+
+    def _probe(self, name, **kw):
+        out = f"{self.tmp}/{name}.json"
+        R.main(["mvp", "--probe", name, "--target", self.tgt, "--out", out, "--fraction", "0.001",
+                "--probe-json", json.dumps(kw)])
+        return json.load(open(out))
+
+    def test_e003_connections(self):
+        out = self._probe("e003", storm=[50], read_s=2)
+        self.assertEqual(out["sequential_connect"]["connect_ms"]["n"], 100)
+        self.assertEqual(out["storm_50"]["ok"], 50)
+        self.assertGreater(out["read_persistent"]["tps"], out["read_new_connection_per_request"]["tps"])
+
+    def test_e008_ddl_under_load_and_limits(self):
+        out = self._probe("e008", rate=50.0, warmup_s=1, measure_s=4, long_txn_s=1)
+        self.assertEqual(out["with_ddl"]["cell"]["status"], "ok", out["with_ddl"]["cell"].get("error"))
+        self.assertEqual(out["with_ddl"]["cell"]["invariants"]["violations"], [])
+        self.assertTrue(all(s["ok"] for s in out["with_ddl"]["side"]["steps"]), out["with_ddl"]["side"])
+        self.assertIsNotNone(out["with_ddl"]["side"]["steps"][0]["valid_after_s"])
+        self.assertTrue(out["limits"]["update_5000_rows"]["ok"])      # PostgreSQL has no 3,000-row limit
+        self.assertTrue(out["limits"]["long_transaction"]["ok"])
+
+    def test_e012_queries_and_interference(self):
+        out = self._probe("e012", rate=50.0, warmup_s=1, measure_s=4, quiet_s=0)
+        for name in ("revenue_by_day_10pct", "product_rank_1pct", "status_counts_full"):
+            self.assertTrue(all(r["ok"] for r in out["single"][name]), out["single"][name])
+            self.assertEqual(out["single"][name][0]["hash"], out["single"][name][1]["hash"])
+        self.assertEqual(out["interference"]["cell"]["status"], "ok", out["interference"]["cell"].get("error"))
+        self.assertGreater(out["interference"]["side"]["runs"], 0)

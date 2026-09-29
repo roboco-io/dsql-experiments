@@ -15,7 +15,7 @@ import time
 
 REMOTE_ROOT = "/opt/e002"
 BUNDLE_FILES = ("requirements.txt", "runner.py", "openloop.py", "workload.py", "datagen.py", "schema.py",
-                "invariants.py", "retry.py", "hist.py", "conn.py")
+                "invariants.py", "retry.py", "hist.py", "conn.py", "mvp_probes.py")
 PUSH_CHUNK = 20000      # characters per SendCommand argument
 FETCH_CHUNK = 18000     # below the 24,000-character StandardOutputContent limit
 FINAL = {"Success", "Failed", "Cancelled", "TimedOut", "DeliveryTimedOut", "Undeliverable", "Terminated"}

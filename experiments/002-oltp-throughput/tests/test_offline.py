@@ -788,6 +788,10 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         self.assertAlmostEqual(E.load_booking_usd(data, "A2", 0.02), 12.8 * E.LOAD_HOURS_EST * 0.125)
         self.assertAlmostEqual(E.load_booking_usd(data, "A2", 0.5), 12.8 * E.LOAD_HOURS_EST * 0.5)
 
+    def test_the_runner_bundle_carries_the_mvp_probes(self):
+        import remote
+        self.assertIn("mvp_probes.py", remote.BUNDLE_FILES)
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

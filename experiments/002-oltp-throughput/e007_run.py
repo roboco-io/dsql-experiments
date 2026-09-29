@@ -51,7 +51,9 @@ def ensure_vault(sess, m) -> str:
     b, vault = sess.client("backup"), names(m.prefix)["vault"]
     try:
         b.describe_backup_vault(BackupVaultName=vault)
-    except b.exceptions.ResourceNotFoundException:
+    except Exception as exc:  # noqa: BLE001 - a missing vault answers AccessDeniedException, not NotFound
+        if IN.code(exc) not in ("AccessDeniedException", "ResourceNotFoundException"):
+            raise
         b.create_backup_vault(BackupVaultName=vault,
                               BackupVaultTags=S.resource_tags(m.prefix, S.BATCH, m.data["expires_at"]))
         m.event(S.BATCH, "e007", note=f"backup vault {vault} created")
@@ -63,7 +65,9 @@ def cleanup_backup(sess, m) -> dict:
     b, vault = sess.client("backup"), names(m.prefix)["vault"]
     try:
         rps = b.list_recovery_points_by_backup_vault(BackupVaultName=vault)["RecoveryPoints"]
-    except b.exceptions.ResourceNotFoundException:
+    except Exception as exc:  # noqa: BLE001 - a missing vault answers AccessDeniedException, not NotFound
+        if IN.code(exc) not in ("AccessDeniedException", "ResourceNotFoundException"):
+            raise
         return {"vault": "absent"}
     for rp in rps:
         b.delete_recovery_point(BackupVaultName=vault, RecoveryPointArn=rp["RecoveryPointArn"])

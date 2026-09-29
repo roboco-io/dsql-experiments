@@ -256,6 +256,22 @@ class NoResetIntegration(unittest.TestCase):
             self.assertGreater(min(own), 0)
             self.assertEqual(kept, sum(own))          # both cells' rows are kept, each counted once
 
+    def test_rerunning_a_cell_does_not_count_the_earlier_attempts_rows(self):
+        # a Spot reclaim killed a cell; its retry reused the cell id and counted the dead attempt's rows
+        with tempfile.TemporaryDirectory() as tmp:
+            tgt = os.path.join(tmp, "t.json")
+            json.dump({"kind": "dsn", "dsn": DSN}, open(tgt, "w"))
+            R.main(["schema", "--target", tgt, "--out", f"{tmp}/s.json"])
+            R.main(["load", "--target", tgt, "--out", f"{tmp}/l.json", "--fraction", "0.001", "--workers", "2"])
+            cell = OL.Cell("it-again", "LOCAL", "open", 120.0, 0, 1, 1, 3, 0.001)
+            outs = []
+            for i in range(2):
+                R.main(["cell", "--target", tgt, "--out", f"{tmp}/{i}.json", "--no-reset",
+                        "--cell-json", json.dumps(asdict(cell))])
+                outs.append(json.load(open(f"{tmp}/{i}.json")))
+            self.assertEqual(outs[1]["invariants"]["violations"], [], outs[1]["invariants"]["facts"])
+            self.assertNotEqual(outs[0]["scope_id"], outs[1]["scope_id"])
+
     def test_a_bad_row_of_another_cell_does_not_fail_this_cell(self):
         with psycopg.connect(DSN, autocommit=True) as c:
             fresh_load(c)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 
 import psycopg
@@ -11,6 +12,7 @@ import psycopg
 TOKEN_TTL_S = 600               # reuse a signed DSQL token this long (it is valid for 15 minutes)
 _TOKEN_CACHE: dict = {}
 _CLIENTS: dict = {}
+_SIGN_LOCK = threading.Lock()
 
 
 def _sign(target: dict) -> str:
@@ -29,9 +31,20 @@ def _dsql_token(target: dict, now: float | None = None) -> str:
     hit = _TOKEN_CACHE.get(key)
     if hit and now - hit[1] < TOKEN_TTL_S:
         return hit[0]
-    token = _sign(target)
-    _TOKEN_CACHE[key] = (token, now)
-    return token
+    with _SIGN_LOCK:                   # single flight: concurrent first connections must not all hit IMDS
+        hit = _TOKEN_CACHE.get(key)
+        if hit and now - hit[1] < TOKEN_TTL_S:
+            return hit[0]
+        for attempt in range(5):
+            try:
+                token = _sign(target)
+                break
+            except Exception as exc:  # noqa: BLE001 - instance credentials can be briefly unavailable
+                if type(exc).__name__ not in ("NoCredentialsError", "CredentialRetrievalError") or attempt == 4:
+                    raise
+                time.sleep(0.5 * 2 ** attempt)
+        _TOKEN_CACHE[key] = (token, now)
+        return token
 
 
 def _credentials(target: dict):

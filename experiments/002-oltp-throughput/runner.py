@@ -13,7 +13,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from multiprocessing import get_context
 
@@ -297,6 +297,10 @@ def cmd_cell(target, cell_json, out, no_reset=False):
         admin = C.sync_connect_factory(target)()
         if no_reset:                               # re-measure mode: rows accumulate; checks see this cell only
             result["reset_mode"] = "none"
+            # each attempt gets its own id block and op_id prefix, so a retried cell never counts the rows a
+            # killed attempt left behind (Spot reclaim, 2026-09-29)
+            cell = replace(cell, cell_id=f"{cell.cell_id}.{int(time.time() * 1000)}")
+            result["scope_id"] = cell.cell_id
             inv_before = INV.inventory(admin)
         else:
             result["pre_reset"] = INV.reset(admin)   # leftovers of a cell that died before its own reset

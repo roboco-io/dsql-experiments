@@ -792,6 +792,37 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         import remote
         self.assertIn("mvp_probes.py", remote.BUNDLE_FILES)
 
+    def test_concurrent_token_requests_sign_once(self):
+        # 256 connections starting together made every thread fetch instance credentials: NoCredentialsError
+        C._TOKEN_CACHE.clear()
+        calls = []
+
+        def slow_sign(t):
+            calls.append(1)
+            time.sleep(0.05)
+            return "tok"
+        tgt = {"host": "h", "region": "r"}
+        with mock.patch.object(C, "_sign", slow_sign):
+            ths = [threading.Thread(target=C._dsql_token, args=(tgt,)) for _ in range(20)]
+            [t.start() for t in ths]
+            [t.join() for t in ths]
+        self.assertEqual(len(calls), 1)
+        C._TOKEN_CACHE.clear()
+
+    def test_token_signing_retries_a_transient_credentials_error(self):
+        C._TOKEN_CACHE.clear()
+        from botocore.exceptions import NoCredentialsError
+        seq = [NoCredentialsError(), "tok"]
+
+        def flaky(t):
+            v = seq.pop(0)
+            if isinstance(v, Exception):
+                raise v
+            return v
+        with mock.patch.object(C, "_sign", flaky), mock.patch.object(C.time, "sleep"):
+            self.assertEqual(C._dsql_token({"host": "h2", "region": "r"}), "tok")
+        C._TOKEN_CACHE.clear()
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

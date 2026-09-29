@@ -750,6 +750,32 @@ class ReviewFixesCostAndMeasurement(unittest.TestCase):
         self.assertTrue(op_lo <= "D1-r-2400.0-r01:15:123456" < op_hi)
         self.assertFalse(op_lo <= "D1-r-2400.0-r010:0:0" < op_hi)
 
+    def test_terminating_a_spot_runner_also_cancels_its_request(self):
+        # a one-time request stayed 'active' after its instance was terminated, so verify counted it (2026-09-28)
+        ec2 = mock.Mock()
+        sess = mock.Mock(client=lambda name: ec2)
+        r = {"type": "ec2_instance", "id": "i-1", "extra": {"spot_request": "sir-1"}}
+        IN._delete(sess, r, {})
+        ec2.terminate_instances.assert_called_once_with(InstanceIds=["i-1"])
+        ec2.cancel_spot_instance_requests.assert_called_once_with(SpotInstanceRequestIds=["sir-1"])
+
+    def test_runner_launch_falls_back_to_the_next_spot_type(self):
+        self.assertEqual(IN.runner_types("c6g.4xlarge,m7g.4xlarge"), ["c6g.4xlarge", "m7g.4xlarge"])
+        self.assertEqual(IN.runner_types("c7g.4xlarge"), ["c7g.4xlarge"])
+
+    def test_dsql_ramp_rates_grow_by_half_from_the_pilot_rate(self):
+        self.assertEqual(E.ramp_rates(1600, 1.5, 13000), [2400, 3600, 5400, 8100, 12150])
+
+    def test_dsql_ramp_summary_takes_the_highest_pass_below_the_first_fail(self):
+        steps = [(2400, "pass"), (3600, "pass"), (5400, "fail"), (4500, "pass")]
+        self.assertEqual(E.ramp_summary(steps), {"q": 4500, "status": "confirmed", "first_fail": 5400})
+        self.assertEqual(E.ramp_summary([(2400, "pass"), (3600, "pass")]),
+                         {"q": 3600, "status": "lower_bound", "first_fail": None})
+        self.assertEqual(E.ramp_summary([(2400, "fail")]), {"q": None, "status": "none", "first_fail": 2400})
+        # an invalid cell (e.g. generator saturated) stops the ramp without proving a failure
+        self.assertEqual(E.ramp_summary([(2400, "pass"), (3600, "invalid")]),
+                         {"q": 2400, "status": "lower_bound", "first_fail": None})
+
     def test_hard_cap_is_the_e002_cap_raised_on_2026_09_28(self):
         self.assertEqual(cost.HARD_CAP_USD, 60.0)
 

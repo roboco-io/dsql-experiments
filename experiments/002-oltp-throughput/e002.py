@@ -78,6 +78,27 @@ def explore_cells(cfg, reps, warmup_s, measure_s):
             for r in range(1, reps + 1) for c in EXPLORE_CONCURRENCY]
 
 
+def ramp_rates(start, factor, cap) -> list[int]:
+    """DSQL-only re-measure (2026-09-29): open-loop rates above the pilot's highest passing rate."""
+    out, r = [], start
+    while True:
+        r = round(r * factor)
+        if r > cap:
+            return out
+        out.append(r)
+
+
+def ramp_summary(steps) -> dict:
+    """steps: [(rate, verdict)] in run order. q is the highest pass below the first fail (confirmed); with no
+    fail, the highest pass is only a lower bound. An invalid cell stops the ramp without proving a failure."""
+    fails = [r for r, v in steps if v == "fail"]
+    first_fail = fails[0] if fails else None
+    passes = [r for r, v in steps if v == "pass" and (first_fail is None or r < first_fail)]
+    q = max(passes) if passes else None
+    status = "none" if q is None else ("confirmed" if first_fail is not None else "lower_bound")
+    return {"q": q, "status": status, "first_fail": first_fail}
+
+
 def main_cells(cfg, rates, rep, warmup_s, measure_s, seed):
     order = list(rates)
     random.Random(f"{seed}:{rep}").shuffle(order)
@@ -408,7 +429,7 @@ def refresh_measured(sess, m):
     m.save()
 
 
-def run_cell_on(sess, m, guard, cfg, cell, pilot, seen_attempt_tps=0.0):
+def run_cell_on(sess, m, guard, cfg, cell, pilot, seen_attempt_tps=0.0, no_reset=False):
     """Book the cell with the shared guard, run it on the config's runner, save the result locally."""
     path = os.path.join(results_dir(m.prefix, cfg), f"{cell.cell_id}.json")
     done = _load_json(path)
@@ -422,7 +443,8 @@ def run_cell_on(sess, m, guard, cfg, cell, pilot, seen_attempt_tps=0.0):
         raise BudgetStop(f"guard stopped before {cell.cell_id}: projected {g['projected_usd']} > {g['cap_usd']}")
     try:
         timeout = int(cell.warmup_s + cell.measure_s + 1200)
-        res = retry_once(lambda: runner_json(sess, m, cfg, "cell", f"--cell-json {shlex.quote(json.dumps(asdict(cell)))}",
+        extra = f"--cell-json {shlex.quote(json.dumps(asdict(cell)))}" + (" --no-reset" if no_reset else "")
+        res = retry_once(lambda: runner_json(sess, m, cfg, "cell", extra,
                                              timeout, cell.cell_id),
                          lambda exc: log(f"{cell.cell_id}: retrying once after {type(exc).__name__}"))
     finally:
@@ -656,6 +678,45 @@ def do_explore(sess, m, args):
     return 0
 
 
+def do_dsql_ramp(sess, m, args):
+    """DSQL-only capacity (2026-09-29 decision): closed loop at 64/256 connections for comparison with the
+    2026-09-28 control results, then an open-loop ramp from the pilot's 1,600 TPS. Cells keep their rows."""
+    _require_ready(m, ["D1"])
+    refresh_measured(sess, m)
+    guard = cost.Guard(lambda: m.data, cap=args.budget_cap)
+    pilot = _pilot(m)
+    out, seen, steps = {"closed": {}, "ramp": []}, 0.0, []
+
+    def run(cell):
+        r = run_cell_on(sess, m, guard, "D1", cell, pilot, seen, no_reset=True)
+        return r, slo.judge(r)
+    try:
+        for c in (64, 256):
+            r, v = run(OL.Cell(f"D1-x-c{c}-nr", "D1", "closed", 0.0, c, 1, args.warmup_s, args.measure_s))
+            seen = max(seen, (r.get("metrics") or {}).get("attempt_tps") or 0.0)
+            out["closed"][c] = {"verdict": v["verdict"], "reasons": v["reasons"],
+                                "success_tps": (r.get("metrics") or {}).get("success_tps")}
+        for rate in ramp_rates(PILOT_RATES[-1], 1.5, args.ramp_max):
+            r, v = run(OL.Cell(f"D1-r-{rate}", "D1", "open", float(rate), 0, 1, args.warmup_s, args.measure_s))
+            steps.append((rate, v["verdict"]))
+            out["ramp"].append({"rate": rate, **v, "success_tps": (r.get("metrics") or {}).get("success_tps")})
+            if v["verdict"] != "pass":
+                break
+        summ = ramp_summary(steps)
+        if summ["first_fail"] and summ["q"]:
+            mid = round((summ["q"] + summ["first_fail"]) / 2)
+            r, v = run(OL.Cell(f"D1-r-{mid}", "D1", "open", float(mid), 0, 1, args.warmup_s, args.measure_s))
+            steps.append((mid, v["verdict"]))
+            out["ramp"].append({"rate": mid, **v, "success_tps": (r.get("metrics") or {}).get("success_tps")})
+    except BudgetStop as exc:
+        out["stopped"] = str(exc)
+        log(f"dsql-ramp stopped: {exc}")
+    out["summary"] = ramp_summary(steps)
+    S.write_private(os.path.join(run_dir(m.prefix), "dsql-ramp.json"), out)
+    print(json.dumps(out, indent=2))
+    return 0
+
+
 def do_measure(sess, m, args):
     cfgs = list(S.CONFIGS)
     _require_ready(m, cfgs)
@@ -753,7 +814,8 @@ def summarize(prefix) -> int:
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("command", choices=["init", "discover", "batch-up", "load", "pilot", "explore", "measure",
-                                        "summarize", "batch-down", "verify", "replace-runner", "status", "metrics"])
+                                        "summarize", "batch-down", "verify", "replace-runner", "status", "metrics",
+                                        "dsql-ramp"])
     p.add_argument("--account-id")
     p.add_argument("--profile", default=S.PROFILE)
     p.add_argument("--region", default=S.REGION)
@@ -770,6 +832,7 @@ def main(argv=None):
     p.add_argument("--explore-warmup-s", type=int, default=120)
     p.add_argument("--explore-measure-s", type=int, default=300)
     p.add_argument("--budget-cap", type=float, default=cost.BUDGET_CAP_USD)
+    p.add_argument("--ramp-max", type=int, default=13000, help="dsql-ramp: highest open-loop rate to try")
     args = p.parse_args(argv)
     if args.region != S.REGION:
         raise S.SafetyError(f"E002 is fixed to {S.REGION}")
@@ -804,7 +867,7 @@ def main(argv=None):
         print(json.dumps({"spent_usd": round(cost.spent_usd(m.data), 3), "steps": m.data.get("steps"),
                           "minutes_left": round(m.minutes_left())}, indent=2))
         return 0
-    if args.command in ("batch-up", "load", "pilot", "explore", "measure") and "discovery" not in m.data:
+    if args.command in ("batch-up", "load", "pilot", "explore", "measure", "dsql-ramp") and "discovery" not in m.data:
         raise S.SafetyError("run discover first")
     if args.command == "batch-up":
         return do_batch_up(sess, m, args, cfgs)
@@ -814,6 +877,8 @@ def main(argv=None):
         return do_pilot(sess, m, args)
     if args.command == "explore":
         return do_explore(sess, m, args)
+    if args.command == "dsql-ramp":
+        return do_dsql_ramp(sess, m, args)
     if args.command == "measure":
         return do_measure(sess, m, args)
     if args.command == "replace-runner":

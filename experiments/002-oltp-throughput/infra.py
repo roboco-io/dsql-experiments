@@ -272,6 +272,11 @@ def create_batch(sess, m, disc) -> None:
     m.event(S.BATCH, "provision_done")
 
 
+def runner_types(spec: str) -> list[str]:
+    """--runner-type accepts a comma list: Spot is tried type by type before any On-Demand fallback."""
+    return [t.strip() for t in spec.split(",") if t.strip()]
+
+
 def launch_runner(sess, m, disc, allow_on_demand, cfg, itype=RUNNER_TYPE) -> str:
     ec2, ssm = sess.client("ec2"), sess.client("ssm")
     tags = S.resource_tags(m.prefix, cfg, m.data["expires_at"])
@@ -279,6 +284,8 @@ def launch_runner(sess, m, disc, allow_on_demand, cfg, itype=RUNNER_TYPE) -> str
     subnet = next(r["id"] for r in m.data["resources"] if r["type"] == "subnet" and r["state"] != "deleted"
                   and r["extra"].get("az") == disc["runner_az"])
     sg, profile = _one(m, "client_security_group"), _one(m, "instance_profile")
+    types = runner_types(itype)
+    itype = types.pop(0)
     spot, inst = True, None
     for _ in range(12):
         try:
@@ -289,6 +296,10 @@ def launch_runner(sess, m, disc, allow_on_demand, cfg, itype=RUNNER_TYPE) -> str
             c = code(exc)
             if c == "InvalidParameterValue" and "profile" in str(exc).lower():
                 time.sleep(10)          # instance profile not yet visible to EC2
+                continue
+            if spot and c in SPOT_CAPACITY and types:
+                m.event(cfg, "deviation", note=f"Spot {itype} unavailable ({c}); trying {types[0]}")
+                itype = types.pop(0)
                 continue
             if spot and c in SPOT_CAPACITY:
                 if not allow_on_demand:
@@ -534,7 +545,10 @@ def _delete(sess, r, detail):
     elif t == "rds_secret":  # only reached if RDS left the secret live after its DB was deleted
         sess.client("secretsmanager").delete_secret(SecretId=rid, ForceDeleteWithoutRecovery=True)
     elif t == "ec2_instance":
-        sess.client("ec2").terminate_instances(InstanceIds=[rid])
+        ec2 = sess.client("ec2")
+        ec2.terminate_instances(InstanceIds=[rid])
+        if r["extra"].get("spot_request"):      # a one-time request can stay 'active' after its instance ends
+            ec2.cancel_spot_instance_requests(SpotInstanceRequestIds=[r["extra"]["spot_request"]])
     elif t == "instance_profile":
         iam = sess.client("iam")
         for role in detail.get("Roles", []):

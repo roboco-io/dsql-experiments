@@ -92,4 +92,4 @@ Concrete code examples and rules for coding agents are in the [Aurora DSQL usage
 | E011 | Development and operations convenience | MVP, compiled from work logs | [View](../experiments/e011/) |
 | E012 | Large queries and interference | MVP, DSQL only | [View](../experiments/e012/) |
 
-The experiment cost for the whole study is about $74. E001 (about $0.08), E004 (about $2.07), and the first E002 run ($48.57) are billed amounts from Cost Explorer. The second E002 run together with E003, E008, and E012 (about $18.6), and E005, E006, E007, and E009 (about $5.1) are estimates calculated from CloudWatch usage and have not yet been reconciled with billed amounts. All experiment resources were deleted, and zero remaining resources was confirmed after each run.
+The experiment cost for the whole study is about $75 in Cost Explorer charges: E001 about $0.08, E004 about $2.07, the first E002 run $48.57, the second E002 run with E003, E008, and E012 $18.54, E005, E006, E007, and E009 $5.07, and $0.65 for transfer and storage shared by the two 2026-09-29 runs. All experiment resources were deleted, and zero remaining resources was confirmed after each run.

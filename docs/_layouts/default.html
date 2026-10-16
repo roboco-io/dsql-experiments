@@ -6,6 +6,9 @@
 <html lang="{{ lang }}">
 <head>
   <meta charset="utf-8">
+  <!-- Google Analytics 4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-9G1SGM9SZQ"></script>
+  <script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-9G1SGM9SZQ');</script>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% if page.title %}{{ page.title | escape }} | {% endif %}{{ t.site_title | escape }}</title>
   <meta name="description" content="{{ page.question | default: t.site_description | escape }}">
